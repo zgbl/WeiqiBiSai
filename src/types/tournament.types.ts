@@ -1,3 +1,6 @@
+import { Types } from 'mongoose';
+import { MongoId } from './mongoose.types';
+
 export enum TournamentFormat {
   KNOCKOUT = 'knockout',
   ROUNDROBIN = 'roundrobin',
@@ -12,15 +15,16 @@ export enum TournamentStatus {
 }
 
 export interface ITournament {
+  _id?: Types.ObjectId;
   name: string;
   format: TournamentFormat;
   startDate: Date;
   endDate: Date;
   description?: string;
   status: TournamentStatus;
-  players: string[]; // Array of player IDs
+  players: MongoId[];
   rounds: IRound[];
-  createdBy?: string; // User ID, optional for now
+  createdBy?: MongoId;
 }
 
 export interface IRound {
@@ -30,9 +34,10 @@ export interface IRound {
 }
 
 export interface IMatch {
-  player1: string; // Player ID
-  player2?: string; // Player ID, optional for byes
-  winner?: string; // Winner ID
+  _id?: Types.ObjectId;
+  player1: MongoId;
+  player2?: MongoId;
+  winner?: MongoId;
   score?: {
     player1: number;
     player2: number;

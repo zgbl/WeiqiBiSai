@@ -1,7 +1,7 @@
-import mongoose, { Schema } from 'mongoose';
+import { Schema, model } from 'mongoose';
 import { IPlayer } from '../types/player.types';
 
-const playerSchema = new Schema({
+const playerSchema = new Schema<IPlayer>({
   name: { type: String, required: true },
   rank: { type: String, required: true },
   rating: { type: Number },
@@ -10,7 +10,9 @@ const playerSchema = new Schema({
   losses: { type: Number, default: 0 },
   draws: { type: Number, default: 0 }
 }, {
-  timestamps: true
+  timestamps: true,
+  toJSON: { virtuals: true },
+  toObject: { virtuals: true }
 });
 
 // Indexes
@@ -29,4 +31,4 @@ playerSchema.virtual('winRate').get(function(this: IPlayer) {
   return totalGames > 0 ? (this.wins / totalGames) * 100 : 0;
 });
 
-export default mongoose.model<IPlayer>('Player', playerSchema);
+export default model<IPlayer>('Player', playerSchema);

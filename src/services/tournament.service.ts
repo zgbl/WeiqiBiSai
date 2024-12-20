@@ -1,7 +1,8 @@
 import { Types } from 'mongoose';
 import Tournament from '../models/tournament.model';
 import Player from '../models/player.model';
-import { TournamentFormat, TournamentStatus } from '../types/tournament.types';
+import { ITournament, TournamentFormat, TournamentStatus, IMatch, IRound } from '../types/tournament.types';
+import { MongoId, toObjectId } from '../types/mongoose.types';
 
 export class TournamentService {
   async createTournament(tournamentData: any) {
@@ -36,99 +37,62 @@ export class TournamentService {
   }
 
   // Generate pairings for the next round
-  async generatePairings(tournamentId: string) {
+  async generatePairings(tournamentId: string): Promise<ITournament | null> {
     const tournament = await Tournament.findById(tournamentId)
-      .populate('players', 'name rank')
-      .populate({
-        path: 'rounds.matches.winner',
-        select: 'name rank'
-      })
+      .populate('players')
       .exec();
 
     if (!tournament) {
       throw new Error('Tournament not found');
     }
 
-    // Check if tournament has enough players
-    if (!tournament.players || tournament.players.length < 2) {
-      throw new Error('Tournament needs at least 2 players to start');
-    }
+    const allPlayers = tournament.players;
+    const rounds: IRound[] = [];
 
-    // If tournament is not started yet, start it
-    if (tournament.status === TournamentStatus.UPCOMING) {
-      tournament.status = TournamentStatus.ONGOING;
-    }
-
-    // For round-robin format
     if (tournament.format === TournamentFormat.ROUNDROBIN) {
-      const players = tournament.players;
-      const n = players.length;
-      const rounds = [];
-
-      // If odd number of players, add a dummy player for byes
-      const allPlayers = n % 2 === 0 ? [...players] : [...players, null];
-      const numRounds = allPlayers.length - 1;
-      const numPairs = Math.floor(allPlayers.length / 2);
-
-      // Generate all rounds using circle method
-      for (let round = 0; round < numRounds; round++) {
-        const matches = [];
-        
-        // Generate matches for this round
-        for (let pair = 0; pair < numPairs; pair++) {
-          const player1Index = pair;
-          const player2Index = allPlayers.length - 1 - pair;
-
-          // Skip matches with dummy player (byes)
-          if (allPlayers[player1Index] && allPlayers[player2Index]) {
-            matches.push({
-              player1: new Types.ObjectId(allPlayers[player1Index]._id),
-              player2: new Types.ObjectId(allPlayers[player2Index]._id),
-              winner: null,
-              result: ''
-            });
-          }
+      for (let i = 0; i < allPlayers.length - 1; i++) {
+        const matches: IMatch[] = [];
+        for (let j = i + 1; j < allPlayers.length; j++) {
+          matches.push({
+            player1: toObjectId(allPlayers[i]._id),
+            player2: toObjectId(allPlayers[j]._id),
+            winner: null,
+            result: ''
+          });
         }
-
-        // Add the round
         rounds.push({
-          roundNumber: round + 1,
-          matches: matches,
+          roundNumber: i + 1,
+          matches,
           completed: false
         });
-
-        // Rotate players for next round (keep first player fixed)
-        const lastPlayer = allPlayers[allPlayers.length - 1];
-        for (let i = allPlayers.length - 1; i > 1; i--) {
-          allPlayers[i] = allPlayers[i - 1];
-        }
-        allPlayers[1] = lastPlayer;
       }
-
-      // Clear any existing rounds and add all new rounds
-      tournament.rounds = rounds;
-
-      await tournament.save();
-      
-      return await Tournament.findById(tournamentId)
-        .populate('players', 'name rank')
-        .populate({
-          path: 'rounds.matches.player1',
-          select: 'name rank'
-        })
-        .populate({
-          path: 'rounds.matches.player2',
-          select: 'name rank'
-        })
-        .populate({
-          path: 'rounds.matches.winner',
-          select: 'name rank'
-        })
-        .lean()
-        .exec();
     }
 
-    throw new Error('Unsupported tournament format');
+    tournament.status = TournamentStatus.ONGOING;
+    tournament.rounds = rounds;
+
+    await tournament.save();
+    
+    return await Tournament.findById(tournamentId)
+      .populate('players', 'name rank')
+      .populate({
+        path: 'rounds.matches.player1',
+        select: 'name rank'
+      })
+      .populate({
+        path: 'rounds.matches.player2',
+        select: 'name rank'
+      })
+      .populate({
+        path: 'rounds.matches.winner',
+        select: 'name rank'
+      })
+      .lean()
+      .exec();
+  }
+
+  async getPlayerById(id: string): Promise<any> {
+    return Player.findById(id).exec();
   }
 
   // Record match result
@@ -183,7 +147,7 @@ export class TournamentService {
     }
 
     // Record the winner
-    match.winner = new Types.ObjectId(winnerId);
+    match.winner = toObjectId(winnerId);
 
     // Check if round is complete
     const round = tournament.rounds.find(r => 

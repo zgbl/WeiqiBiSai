@@ -1,8 +1,10 @@
 import { Request, Response } from 'express';
+import { Types } from 'mongoose';
 import { TournamentService } from '../services/tournament.service';
 import { TournamentFormat, TournamentStatus } from '../types/tournament.types';
 import Tournament from '../models/tournament.model';
 import Player from '../models/player.model';
+import { MongoId, toObjectId } from '../types/mongoose.types';
 
 const tournamentService = new TournamentService();
 
@@ -66,70 +68,36 @@ export class TournamentController {
   // Add player to tournament
   async addPlayer(req: Request, res: Response) {
     try {
-      const tournamentId = req.params.id;
-      const { name, rank, playerId } = req.body;
+      const { tournamentId, playerId } = req.params;
+      const tournament = await tournamentService.getTournamentById(tournamentId);
+      const player = await tournamentService.getPlayerById(playerId);
 
-      const tournament = await Tournament.findById(tournamentId);
-      if (!tournament) {
-        return res.status(404).json({ message: 'Tournament not found' });
+      if (!tournament || !player) {
+        return res.status(404).json({ message: 'Tournament or player not found' });
       }
 
-      let player;
-
-      if (playerId) {
-        // 如果提供了 playerId，使用现有棋手
-        player = await Player.findById(playerId);
-        if (!player) {
-          return res.status(404).json({ message: 'Player not found' });
-        }
-      } else {
-        // 否则创建新棋手
-        player = await Player.create({ name, rank });
+      tournament.players.push(toObjectId(player._id));
+      if (player.tournaments) {
+        player.tournaments.push(toObjectId(tournament._id));
       }
 
-      // 检查棋手是否已经在比赛中
-      const playerExists = tournament.players.some(pid => 
-        pid.toString() === player._id.toString()
-      );
-
-      if (playerExists) {
-        return res.status(400).json({ message: 'Player already in tournament' });
-      }
-
-      // 添加棋手到比赛
-      tournament.players.push(player._id);
       await tournament.save();
+      await player.save();
 
-      // 添加比赛到棋手的比赛列表
-      const tournamentExists = player.tournaments.some(tid => 
-        tid.toString() === tournament._id.toString()
-      );
-
-      if (!tournamentExists) {
-        player.tournaments.push(tournament._id);
-        await player.save();
+      res.json(tournament);
+    } catch (error) {
+      if (error instanceof Error) {
+        res.status(400).json({ message: error.message });
+      } else {
+        res.status(500).json({ message: 'An unknown error occurred' });
       }
-
-      // 返回更新后的比赛信息
-      const updatedTournament = await Tournament.findById(tournamentId)
-        .populate('players', 'name rank')
-        .lean()
-        .exec();
-
-      res.json(updatedTournament);
-    } catch (error: any) {
-      console.error('Error adding player:', error);
-      res.status(500).json({ 
-        message: 'Failed to add player to tournament',
-        error: error.message 
-      });
     }
   }
 
   // Generate next round
   async generateNextRound(req: Request, res: Response) {
     try {
-      const tournamentId = req.params.id;  
+      const { tournamentId } = req.params;  
       console.log('Generating next round for tournament:', tournamentId);
 
       const tournament = await Tournament.findById(tournamentId)
@@ -411,6 +379,27 @@ export class TournamentController {
     } catch (error: any) {
       console.error('Error deleting player:', error);
       res.status(500).json({ message: error.message });
+    }
+  }
+
+  // Generate rounds
+  async generateRounds(req: Request, res: Response) {
+    try {
+      const { tournamentId } = req.params;
+      const updatedTournament = await tournamentService.generatePairings(tournamentId);
+      
+      if (updatedTournament) {
+        console.log('Generated all rounds:', updatedTournament.rounds);
+        res.json(updatedTournament);
+      } else {
+        res.status(404).json({ message: 'Tournament not found' });
+      }
+    } catch (error) {
+      if (error instanceof Error) {
+        res.status(400).json({ message: error.message });
+      } else {
+        res.status(500).json({ message: 'An unknown error occurred' });
+      }
     }
   }
 }
