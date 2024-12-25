@@ -1,30 +1,24 @@
 import { Types } from 'mongoose';
-import { MongoId } from './mongoose.types';
+import { MongoId, WithMongoId } from './mongoose.types';
 
 export enum TournamentFormat {
-  KNOCKOUT = 'knockout',
-  ROUNDROBIN = 'roundrobin',
-  SWISS = 'swiss',
-  MCMAHON = 'mcmahon'
+  ROUNDROBIN = 'ROUNDROBIN',
+  SINGLEELIMINATION = 'SINGLEELIMINATION',
+  DOUBLEELIMINATION = 'DOUBLEELIMINATION'
 }
 
 export enum TournamentStatus {
-  UPCOMING = 'upcoming',
-  ONGOING = 'ongoing',
-  COMPLETED = 'completed'
+  UPCOMING = 'UPCOMING',
+  ONGOING = 'ONGOING',
+  COMPLETED = 'COMPLETED'
 }
 
-export interface ITournament {
+export interface IMatch {
   _id?: Types.ObjectId;
-  name: string;
-  format: TournamentFormat;
-  startDate: Date;
-  endDate: Date;
-  description?: string;
-  status: TournamentStatus;
-  players: MongoId[];
-  rounds: IRound[];
-  createdBy?: MongoId;
+  player1: MongoId;
+  player2: MongoId;
+  winner?: MongoId | null;
+  result: string;
 }
 
 export interface IRound {
@@ -33,13 +27,17 @@ export interface IRound {
   completed: boolean;
 }
 
-export interface IMatch {
+export interface ITournament {
   _id?: Types.ObjectId;
-  player1: MongoId;
-  player2?: MongoId;
-  winner?: MongoId;
-  score?: {
-    player1: number;
-    player2: number;
-  };
+  name: string;
+  format: TournamentFormat;
+  status: TournamentStatus;
+  startDate: Date;
+  endDate: Date;
+  players: MongoId[];
+  rounds: IRound[];
+  description?: string;
+  createdBy?: MongoId;
 }
+
+export type TournamentDocument = WithMongoId<ITournament>;

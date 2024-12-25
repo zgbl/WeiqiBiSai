@@ -6,23 +6,28 @@ import { validateTournament } from '../middleware/validation.middleware';
 const router = express.Router();
 const tournamentController = new TournamentController();
 
-// Public routes
-router.get('/', tournamentController.getTournaments);
-
-// Player routes - 放在具体 ID 路由之前
+// Player management routes   --> Moved to player.routes.ts TXY 2024.12.21 > No. back here
 router.get('/players', tournamentController.getAllPlayers);
-router.post('/players', tournamentController.createPlayer);
-router.delete('/players/:id', tournamentController.deletePlayer);
+router.post('/players', authenticate, tournamentController.createPlayer);
+router.delete('/players/:id', authenticate, tournamentController.deletePlayer);
+//Now your player routes will be accessible at:    //TXY  12.21 18:38
+//GET /api/tournaments/players
+//POST /api/tournaments/players
+//DELETE /api/tournaments/players/:id
 
-// Tournament specific routes
+
+
+// Tournament routes
+router.get('/', tournamentController.getTournaments);
+router.post('/', authenticate, validateTournament, tournamentController.createTournament);
+
+// Tournament detail routes
 router.get('/:id', tournamentController.getTournamentById);
-router.post('/', validateTournament, tournamentController.createTournament);
-router.put('/:id', validateTournament, tournamentController.updateTournament);
-router.post('/:id/players', tournamentController.addPlayer);
-router.post('/:id/rounds', tournamentController.generateNextRound);
-
-// Tournament matches routes
-router.put('/:id/matches/:matchId', tournamentController.recordMatchResult);
-router.delete('/:id/rounds/:roundNumber', tournamentController.deleteRound);
+router.put('/:id', authenticate, validateTournament, tournamentController.updateTournament);
+router.post('/:id/players', authenticate, tournamentController.addPlayer);
+router.post('/:id/rounds', authenticate, tournamentController.generateNextRound);
+router.put('/:id/matches/:matchId', authenticate, tournamentController.updateMatchResult);
+router.delete('/:id/rounds/:roundNumber', authenticate, tournamentController.deleteRound);
+router.get('/:id/results', tournamentController.getTournamentResults);
 
 export default router;

@@ -39,7 +39,7 @@ app.get('/', (req, res) => {
 
 // Routes
 app.use('/api/tournaments', tournamentRoutes);
-app.use('/api/players', playerRoutes);
+//app.use('/api/players', playerRoutes);   //comment out 2024.12.21
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 

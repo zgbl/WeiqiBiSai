@@ -13,6 +13,11 @@ declare global {
 }
 
 export const authenticate = (req: Request, res: Response, next: NextFunction) => {
+    // 检查是否跳过身份验证（比如在调试模式）
+    if (process.env.SKIP_AUTH === 'true') {
+      return next();
+    }
+  
   try {
     const token = req.headers.authorization?.split(' ')[1];
     

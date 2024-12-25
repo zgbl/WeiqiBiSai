@@ -67,6 +67,9 @@ const TournamentDetails = () => {
     try {
       const response = await axios.get(`http://localhost:3000/api/tournaments/${id}`);
       console.log('Tournament data:', response.data);
+      if (response.data && response.data.players) {
+        console.log('Players:', response.data.players);
+      }
       setTournament(response.data);
     } catch (error) {
       console.error('Error fetching tournament:', error);
@@ -96,6 +99,7 @@ const TournamentDetails = () => {
     }
   }, [openDialog]);
 
+  /*
   const handleAddPlayer = async () => {
     try {
       setError('');
@@ -104,7 +108,8 @@ const TournamentDetails = () => {
           setError('Name and rank are required');
           return;
         }
-        await axios.post(`http://localhost:3000/api/tournaments/${id}/players`, newPlayer);
+        //await axios.post('http://localhost:3000/api/players', newPlayer);
+        await axios.post('http://localhost:3000/api/tournaments/players', newPlayer);
       } else {
         if (!selectedExistingPlayer) {
           setError('Please select a player');
@@ -129,6 +134,46 @@ const TournamentDetails = () => {
       setError(error.response?.data?.message || 'Failed to add player');
     }
   };
+  */
+
+  const handleAddPlayer = async () => {
+    try {
+      setError('');
+      if (isNewPlayer) {
+        if (!newPlayer.name || !newPlayer.rank) {
+          setError('Name and rank are required');
+          return;
+        }
+        // First create the new player
+        const playerResponse = await axios.post('http://localhost:3000/api/tournaments/players', newPlayer);
+        const newPlayerId = playerResponse.data._id;
+        
+        // Then add the player to the tournament
+        await axios.post(`http://localhost:3000/api/tournaments/${id}/players`, {
+          playerId: newPlayerId
+        });
+      } else {
+        if (!selectedExistingPlayer) {
+          setError('Please select a player');
+          return;
+        }
+        // Add existing player to tournament
+        await axios.post(`http://localhost:3000/api/tournaments/${id}/players`, {
+          playerId: selectedExistingPlayer
+        });
+      }
+      
+      setOpenDialog(false);
+      setNewPlayer({ name: '', rank: '' });
+      setSelectedExistingPlayer('');
+      fetchTournament();
+    } catch (error: any) {
+      console.error('Error adding player:', error);
+      setError(error.response?.data?.message || 'Failed to add player');
+    }
+  };
+
+
 
   const handleStartTournament = async () => {
     try {
@@ -257,8 +302,8 @@ const TournamentDetails = () => {
             </Typography>
             <List>
               {tournament.players && tournament.players.length > 0 ? (
-                tournament.players.map((player) => (
-                  <div key={player._id}>
+                tournament.players.map((player, index) => (
+                  <div key={`player-${player._id}-${index}`}>
                     <ListItem>
                       <ListItemText
                         primary={player.name}

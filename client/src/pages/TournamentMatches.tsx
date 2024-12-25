@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import {
   Box,
   Button,
@@ -23,6 +23,7 @@ import {
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import axios from 'axios';
+import { useSnackbar } from 'notistack';
 
 // Styled components
 const StyledPaper = styled(Paper)(({ theme }) => ({
@@ -86,65 +87,253 @@ interface Round {
 interface Tournament {
   _id: string;
   name: string;
-  format: string;
+  format: 'ROUNDROBIN' | 'SINGLEELIMINATION' | 'DOUBLEELIMINATION';
   rounds: Round[];
   status: string;
+  players: Player[];
 }
+
+interface RecordResultDialogProps {
+  open: boolean;
+  onClose: () => void;
+  match: Match | null;
+  onSave: (winnerId: string) => void;
+}
+
+const RecordResultDialog = ({ open, onClose, match, onSave }: RecordResultDialogProps) => {
+  const [winner, setWinner] = useState<string>('');
+  const [error, setError] = useState<string>('');
+  const { enqueueSnackbar } = useSnackbar();
+
+  useEffect(() => {
+    if (open) {
+      setWinner('');
+      setError('');
+    }
+  }, [open]);
+
+  const handleSave = () => {
+    if (!winner) {
+      setError('Winner ID and result are required');
+      enqueueSnackbar('Please select a winner', { variant: 'error' });
+      return;
+    }
+    onSave(winner);
+  };
+
+  const players = [
+    ...(match?.player1 ? [{ id: match.player1._id, name: match.player1.name }] : []),
+    ...(match?.player2 ? [{ id: match.player2._id, name: match.player2.name }] : [])
+  ];
+
+  console.log('Available players:', players);
+  console.log('Current winner:', winner);
+
+  return (
+    <Dialog open={open} onClose={onClose}>
+      <DialogTitle>Record Match Result</DialogTitle>
+      <DialogContent>
+        <FormControl fullWidth sx={{ mt: 2 }}>
+          <InputLabel id="winner-select-label">Winner</InputLabel>
+          <Select
+            labelId="winner-select-label"
+            value={winner}
+            onChange={(e) => {
+              console.log('Selected winner:', e.target.value);
+              setWinner(e.target.value);
+              setError('');
+            }}
+            label="Winner"
+          >
+            {players.map((player) => (
+              <MenuItem key={player.id} value={player.id}>
+                {player.name}
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+        {error && (
+          <Typography color="error" sx={{ mt: 2 }}>
+            {error}
+          </Typography>
+        )}
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>CANCEL</Button>
+        <Button onClick={handleSave} variant="contained">
+          SAVE RESULT
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+};
 
 const TournamentMatches = () => {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const [tournament, setTournament] = useState<Tournament | null>(null);
   const [openDialog, setOpenDialog] = useState(false);
   const [selectedMatch, setSelectedMatch] = useState<Match | null>(null);
-  const [winner, setWinner] = useState<string>('');
-  const [error, setError] = useState('');
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [roundToDelete, setRoundToDelete] = useState<number | null>(null);
+  const { enqueueSnackbar } = useSnackbar();
 
   const fetchTournament = async () => {
     try {
       const response = await axios.get(`http://localhost:3000/api/tournaments/${id}`);
+      console.log('Tournament response:', response.data);
       setTournament(response.data);
     } catch (error: any) {
       console.error('Error fetching tournament:', error);
-      setError(error.response?.data?.message || 'Failed to fetch tournament');
+      enqueueSnackbar('Failed to fetch tournament', { variant: 'error' });
     }
   };
 
   useEffect(() => {
-    if (id) {
-      fetchTournament();
-    }
+    fetchTournament();
   }, [id]);
 
-  const handleNextRound = async () => {
-    try {
-      await axios.post(`http://localhost:3000/api/tournaments/${id}/rounds`);
-      fetchTournament();
-    } catch (error: any) {
-      console.error('Error generating next round:', error);
-      setError(error.response?.data?.message || 'Failed to generate next round');
+  const canGenerateNextRound = () => {
+    if (!tournament) return false;
+    const currentRound = tournament.rounds[tournament.rounds.length - 1];
+    return currentRound && currentRound.matches.every(match => match.winner != null);
+  };
+
+  const handleEndTournament = () => {
+    if (!tournament) {
+      enqueueSnackbar('比赛数据未加载', { variant: 'error' });
+      return;
+    }
+
+    console.log('Tournament data:', {
+      id: tournament._id,
+      name: tournament.name,
+      format: tournament.format,
+      status: tournament.status,
+      rounds: tournament.rounds.length
+    });
+
+    let message = '比赛结束条件检查：\n\n';
+    let canEnd = true;
+
+    if (tournament.format === 'ROUNDROBIN') {
+      // 1. 检查轮次数量
+      const totalPlayers = tournament.players.length;
+      const expectedRounds = totalPlayers - 1;
+      const currentRounds = tournament.rounds.length;
+      const roundsComplete = currentRounds >= expectedRounds;
+      canEnd = canEnd && roundsComplete;
+      
+      message += `1. 轮次数量要求：${roundsComplete ? '✅' : '❌'}\n`;
+      message += `   - 需要完成 ${expectedRounds} 轮比赛\n`;
+      message += `   - 当前已完成 ${currentRounds} 轮\n`;
+      message += `   - 结果：${roundsComplete ? '满足' : '不满足，还需要' + (expectedRounds - currentRounds) + '轮'}\n\n`;
+
+      // 2. 检查每轮比赛是否都有结果
+      const incompleteRounds = tournament.rounds
+        .filter(round => round.matches.some(match => match.winner == null))
+        .map(round => round.roundNumber);
+      
+      const allMatchesComplete = incompleteRounds.length === 0;
+      canEnd = canEnd && allMatchesComplete;
+
+      message += `2. 比赛结果记录要求：${allMatchesComplete ? '✅' : '❌'}\n`;
+      message += `   - 需要：所有比赛都记录结果\n`;
+      if (incompleteRounds.length > 0) {
+        message += `   - 结果：不满足，第 ${incompleteRounds.join(', ')} 轮还有未记录的比赛\n`;
+      } else {
+        message += '   - 结果：满足，所有比赛都已记录结果\n';
+      }
+
+    } else if (tournament.format === 'SINGLEELIMINATION') {
+      // 1. 检查是否已开始比赛
+      const hasStarted = tournament.rounds.length > 0;
+      canEnd = canEnd && hasStarted;
+      
+      message += `1. 比赛开始要求：${hasStarted ? '✅' : '❌'}\n`;
+      message += `   - 需要：比赛已经开始\n`;
+      message += `   - 当前：${hasStarted ? '已开始' : '未开始'}\n`;
+      message += `   - 结果：${hasStarted ? '满足' : '不满足'}\n\n`;
+
+      if (hasStarted) {
+        // 2. 检查决赛是否完成
+        const lastRound = tournament.rounds[tournament.rounds.length - 1];
+        const incompleteMatches = lastRound.matches.filter(match => match.winner == null).length;
+        const finalsComplete = incompleteMatches === 0;
+        canEnd = canEnd && finalsComplete;
+
+        message += `2. 决赛完成要求：${finalsComplete ? '✅' : '❌'}\n`;
+        message += `   - 需要：决赛全部完成\n`;
+        message += `   - 当前：${finalsComplete ? '已完成' : '还有 ' + incompleteMatches + ' 场比赛未完成'}\n`;
+        message += `   - 结果：${finalsComplete ? '满足' : '不满足'}\n`;
+      }
+    } else {
+      console.error('Unknown tournament format:', tournament.format);
+      message += `❌ 错误：未知的比赛类型 (${tournament.format})\n`;
+      message += '请联系管理员修复此问题';
+      canEnd = false;
+    }
+
+    message += '\n结论：' + (canEnd ? '✅ 可以结束比赛' : '❌ 无法结束比赛，请满足以上所有条件');
+
+    enqueueSnackbar(message, { 
+      variant: canEnd ? 'success' : 'warning',
+      autoHideDuration: 12000,
+      style: { 
+        whiteSpace: 'pre-line',
+        maxWidth: '500px'
+      }
+    });
+
+    if (canEnd) {
+      navigate(`/tournament/${id}/results`);
     }
   };
 
-  const handleRecordResult = async () => {
-    if (!selectedMatch || !winner) return;
+  const handleGenerateNextRound = async () => {
+    try {
+      await axios.post(`/api/tournament/${id}/generate-next-round`);
+      fetchTournament();
+      enqueueSnackbar('Next round generated successfully', { variant: 'success' });
+    } catch (error) {
+      console.error('Error generating next round:', error);
+      enqueueSnackbar('Failed to generate next round', { variant: 'error' });
+    }
+  };
+
+  const handleRecordResult = async (winnerId: string) => {
+    if (!selectedMatch) {
+      enqueueSnackbar('Match is required', { variant: 'error' });
+      return;
+    }
+
+    if (!winnerId) {
+      enqueueSnackbar('Winner ID is required', { variant: 'error' });
+      return;
+    }
 
     try {
-      // 找到获胜者的完整信息
-      const winnerPlayer = selectedMatch.player1._id === winner ? selectedMatch.player1 : selectedMatch.player2;
-      
-      await axios.put(
+      console.log('Recording result:', {
+        tournamentId: id,
+        matchId: selectedMatch._id,
+        winnerId
+      });
+
+      const response = await axios.put(
         `http://localhost:3000/api/tournaments/${id}/matches/${selectedMatch._id}`,
-        { winnerId: winnerPlayer._id }  // 发送 winnerId 而不是整个 winner 对象
+        { winnerId }
       );
+
+      console.log('Record result response:', response.data);
+      enqueueSnackbar('Match result recorded successfully', { variant: 'success' });
+
       setOpenDialog(false);
       setSelectedMatch(null);
-      setWinner('');
       fetchTournament();
     } catch (error: any) {
       console.error('Error recording match result:', error);
-      setError(error.response?.data?.message || 'Failed to record match result');
+      const errorMessage = error.response?.data?.message || 'Failed to record match result';
+      enqueueSnackbar(errorMessage, { variant: 'error' });
     }
   };
 
@@ -154,7 +343,7 @@ const TournamentMatches = () => {
       fetchTournament();
     } catch (error: any) {
       console.error('Error deleting round:', error);
-      setError(error.response?.data?.message || 'Failed to delete round');
+      enqueueSnackbar('Failed to delete round', { variant: 'error' });
     }
   };
 
@@ -167,145 +356,108 @@ const TournamentMatches = () => {
 
   return (
     <Box sx={{ p: 3 }}>
-      <Typography variant="h4" component="h1" gutterBottom sx={{ mb: 4 }}>
+      <Typography variant="h4" gutterBottom>
         {tournament.name} - Matches
       </Typography>
 
-      {tournament.rounds.map((round) => (
-        <StyledPaper key={round.roundNumber}>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-            <Typography variant="h5" sx={{ color: 'primary.main' }}>
-              Round {round.roundNumber}
-            </Typography>
+      {tournament && (
+        <>
+          {tournament.rounds.map((round, index) => (
+            <Paper key={index} sx={{ mb: 3, p: 2 }}>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+                <Typography variant="h5" sx={{ color: 'primary.main' }}>
+                  Round {round.roundNumber}
+                </Typography>
+                <Button
+                  variant="outlined"
+                  color="error"
+                  onClick={() => {
+                    setRoundToDelete(round.roundNumber);
+                    setDeleteDialogOpen(true);
+                  }}
+                  startIcon={<DeleteIcon />}
+                >
+                  Delete Round
+                </Button>
+              </Box>
+              <TableContainer>
+                <Table>
+                  <TableHead>
+                    <TableRow>
+                      <StyledTableCell>Player 1</StyledTableCell>
+                      <StyledTableCell className="rank-cell">Rank</StyledTableCell>
+                      <StyledTableCell className="vs-cell">vs</StyledTableCell>
+                      <StyledTableCell>Player 2</StyledTableCell>
+                      <StyledTableCell className="rank-cell">Rank</StyledTableCell>
+                      <StyledTableCell>Winner</StyledTableCell>
+                      <StyledTableCell className="action-cell">Action</StyledTableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {round.matches.map((match) => {
+                      console.log('Rendering match:', match);
+                      return (
+                        <TableRow key={match._id} sx={{ '&:hover': { backgroundColor: 'rgba(0,0,0,0.02)' } }}>
+                          <StyledTableCell>{match.player1?.name || 'Bye'}</StyledTableCell>
+                          <StyledTableCell className="rank-cell">{match.player1?.rank || '-'}</StyledTableCell>
+                          <StyledTableCell className="vs-cell">vs</StyledTableCell>
+                          <StyledTableCell>{match.player2?.name || 'Bye'}</StyledTableCell>
+                          <StyledTableCell className="rank-cell">{match.player2?.rank || '-'}</StyledTableCell>
+                          <StyledTableCell>
+                            {match.winner ? match.winner.name : '-'}
+                          </StyledTableCell>
+                          <StyledTableCell className="action-cell">
+                            {!match.winner && (
+                              <Button
+                                variant="contained"
+                                size="small"
+                                onClick={() => {
+                                  setSelectedMatch(match);
+                                  setOpenDialog(true);
+                                }}
+                              >
+                                Record Result
+                              </Button>
+                            )}
+                          </StyledTableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            </Paper>
+          ))}
+
+          <Box sx={{ mt: 3, display: 'flex', gap: 2 }}>
+            {isRoundComplete && tournament.status !== 'completed' && (
+              <Button
+                variant="contained"
+                onClick={handleGenerateNextRound}
+                disabled={!canGenerateNextRound()}
+              >
+                Generate Next Round
+              </Button>
+            )}
+
             <Button
-              variant="outlined"
-              color="error"
-              onClick={() => {
-                setRoundToDelete(round.roundNumber);
-                setDeleteDialogOpen(true);
-              }}
-              startIcon={<DeleteIcon />}
+              variant="contained"
+              color="success"
+              onClick={handleEndTournament}
+              sx={{ ml: 2 }}
             >
-              Delete Round
+              End Tournament
             </Button>
           </Box>
-          <TableContainer>
-            <Table>
-              <TableHead>
-                <TableRow>
-                  <StyledTableCell>Player 1</StyledTableCell>
-                  <StyledTableCell className="rank-cell">Rank</StyledTableCell>
-                  <StyledTableCell className="vs-cell">vs</StyledTableCell>
-                  <StyledTableCell>Player 2</StyledTableCell>
-                  <StyledTableCell className="rank-cell">Rank</StyledTableCell>
-                  <StyledTableCell>Winner</StyledTableCell>
-                  <StyledTableCell className="action-cell">Action</StyledTableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {round.matches.map((match) => (
-                  <TableRow key={match._id} sx={{ '&:hover': { backgroundColor: 'rgba(0,0,0,0.02)' } }}>
-                    <StyledTableCell>{match.player1.name}</StyledTableCell>
-                    <StyledTableCell className="rank-cell">{match.player1.rank}</StyledTableCell>
-                    <StyledTableCell className="vs-cell">vs</StyledTableCell>
-                    <StyledTableCell>{match.player2?.name || 'Bye'}</StyledTableCell>
-                    <StyledTableCell className="rank-cell">{match.player2?.rank || '-'}</StyledTableCell>
-                    <StyledTableCell>
-                      {match.winner ? match.winner.name : '-'}
-                    </StyledTableCell>
-                    <StyledTableCell className="action-cell">
-                      {!match.winner && (
-                        <ActionButton
-                          variant="contained"
-                          size="small"
-                          onClick={() => {
-                            setSelectedMatch(match);
-                            setOpenDialog(true);
-                          }}
-                        >
-                          Record Result
-                        </ActionButton>
-                      )}
-                    </StyledTableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
-        </StyledPaper>
-      ))}
-
-      {isRoundComplete && tournament.status !== 'completed' && (
-        <Box sx={{ textAlign: 'center' }}>
-          <ActionButton
-            className="next-round"
-            variant="contained"
-            onClick={handleNextRound}
-          >
-            Generate Next Round
-          </ActionButton>
-        </Box>
+        </>
       )}
 
-      <Dialog 
-        open={openDialog} 
+      <RecordResultDialog
+        open={openDialog}
         onClose={() => setOpenDialog(false)}
-        PaperProps={{
-          sx: { minWidth: '300px', p: 1 }
-        }}
-        aria-labelledby="record-result-dialog-title"
-        disablePortal={false}
-        keepMounted={false}
-        onBackdropClick={() => setOpenDialog(false)}
-      >
-        <DialogTitle id="record-result-dialog-title" sx={{ pb: 2 }}>
-          Record Match Result
-        </DialogTitle>
-        <DialogContent>
-          <Box sx={{ pt: 2 }}>
-            <FormControl fullWidth>
-              <InputLabel id="winner-select-label">Winner</InputLabel>
-              <Select
-                labelId="winner-select-label"
-                id="winner-select"
-                value={winner}
-                label="Winner"
-                onChange={(e) => setWinner(e.target.value)}
-                autoFocus
-              >
-                <MenuItem value={selectedMatch?.player1._id}>
-                  {selectedMatch?.player1.name}
-                </MenuItem>
-                {selectedMatch?.player2 && (
-                  <MenuItem value={selectedMatch?.player2._id}>
-                    {selectedMatch?.player2.name}
-                  </MenuItem>
-                )}
-              </Select>
-            </FormControl>
-            {error && (
-              <Typography color="error" sx={{ mt: 2 }}>
-                {error}
-              </Typography>
-            )}
-          </Box>
-        </DialogContent>
-        <DialogActions sx={{ p: 2, pt: 1 }}>
-          <Button 
-            onClick={() => setOpenDialog(false)}
-            tabIndex={0}
-          >
-            Cancel
-          </Button>
-          <ActionButton 
-            onClick={handleRecordResult} 
-            variant="contained"
-            tabIndex={0}
-          >
-            Save Result
-          </ActionButton>
-        </DialogActions>
-      </Dialog>
+        match={selectedMatch}
+        onSave={handleRecordResult}
+      />
 
       <Dialog
         open={deleteDialogOpen}

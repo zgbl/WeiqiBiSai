@@ -18,7 +18,7 @@ const NewTournament = () => {
   const navigate = useNavigate();
   const [formData, setFormData] = useState({
     name: '',
-    format: 'knockout',
+    format: 'ROUNDROBIN',
     startDate: '',
     endDate: '',
     description: '',
@@ -72,10 +72,9 @@ const NewTournament = () => {
                   onChange={handleChange}
                   required
                 >
-                  <MenuItem value="knockout">Knockout</MenuItem>
-                  <MenuItem value="roundrobin">Round Robin</MenuItem>
-                  <MenuItem value="swiss">Swiss</MenuItem>
-                  <MenuItem value="mcmahon">McMahon</MenuItem>
+                  <MenuItem value="ROUNDROBIN">Round Robin</MenuItem>
+                  <MenuItem value="SINGLEELIMINATION">Single Elimination</MenuItem>
+                  <MenuItem value="DOUBLEELIMINATION">Double Elimination</MenuItem>
                 </Select>
               </FormControl>
             </Grid>
