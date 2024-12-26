@@ -72,9 +72,10 @@ const NewTournament = () => {
                   onChange={handleChange}
                   required
                 >
-                  <MenuItem value="ROUNDROBIN">Round Robin</MenuItem>
-                  <MenuItem value="SINGLEELIMINATION">Single Elimination</MenuItem>
-                  <MenuItem value="DOUBLEELIMINATION">Double Elimination</MenuItem>
+                  <MenuItem value="ROUNDROBIN">单循环赛 Round Robin</MenuItem>
+                  <MenuItem value="SINGLEELIMINATION">单淘汰赛 Single Elimination</MenuItem>
+                  <MenuItem value="DOUBLEELIMINATION">双淘汰赛 Double Elimination</MenuItem>
+                  <MenuItem value="SWISS">积分循环赛 Swiss System</MenuItem>
                 </Select>
               </FormControl>
             </Grid>
@@ -110,10 +111,15 @@ const NewTournament = () => {
                 fullWidth
                 label="Description"
                 name="description"
-                value={formData.description}
-                onChange={handleChange}
                 multiline
                 rows={4}
+                value={formData.description}
+                onChange={handleChange}
+                helperText={
+                  formData.format === 'SWISS' ? 
+                  '积分循环赛说明：每轮根据选手积分进行配对，胜者得1分，负者得0分。总轮数由选手数量决定。' : 
+                  '请输入比赛说明'
+                }
               />
             </Grid>
 

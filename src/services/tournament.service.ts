@@ -251,6 +251,16 @@ export class TournamentService {
         break;
       }
 
+      case TournamentFormat.SWISS: {
+        const matches = await this.generateSwissPairings(tournamentId);
+        rounds.push({
+          roundNumber: roundNumber++,
+          matches,
+          completed: false
+        });
+        break;
+      }
+
       default:
         throw new Error('Invalid tournament format');
     }
@@ -406,8 +416,320 @@ export class TournamentService {
         const finalRounds = tournament.rounds.slice(-2);
         return finalRounds.every(round => round.completed);
         
+      case TournamentFormat.SWISS:
+        return tournament.rounds.length >= 4; // Assuming 4 rounds for Swiss format
+        
       default:
         return false;
     }
+  }
+
+  private async getPlayerScore(tournamentId: string, playerId: string): Promise<number> {
+    const tournament = await Tournament.findById(tournamentId)
+      .populate('rounds.matches')
+      .exec();
+
+    if (!tournament) return 0;
+
+    let score = 0;
+    tournament.rounds.forEach(round => {
+      round.matches.forEach(match => {
+        if (match.winner?.toString() === playerId) {
+          score += 1;
+        }
+      });
+    });
+    return score;
+  }
+
+  private async havePlayed(tournamentId: string, player1Id: string, player2Id: string): Promise<boolean> {
+    const tournament = await Tournament.findById(tournamentId)
+      .populate('rounds.matches')
+      .exec();
+
+    if (!tournament) return false;
+
+    return tournament.rounds.some(round =>
+      round.matches.some(match =>
+        (match.player1.toString() === player1Id && match.player2.toString() === player2Id) ||
+        (match.player1.toString() === player2Id && match.player2.toString() === player1Id)
+      )
+    );
+  }
+
+  async generateSwissPairings(tournamentId: string): Promise<IMatch[]> {
+    const tournament = await Tournament.findById(tournamentId)
+      .populate('players')
+      .populate({
+        path: 'rounds.matches.player1',
+        select: 'name rank'
+      })
+      .populate({
+        path: 'rounds.matches.player2',
+        select: 'name rank'
+      })
+      .exec();
+
+    if (!tournament) {
+      throw new Error('Tournament not found');
+    }
+
+    const scores = this.calculatePlayerScores(tournament);
+    const playerScores = tournament.players.map((player: any) => ({
+      player: player._id.toString(),
+      name: player.name,
+      score: this.getPlayerScore(scores, player._id.toString())
+    })).sort((a, b) => b.score - a.score); // 按分数降序排序
+
+    const matches: IMatch[] = [];
+    const paired = new Set<string>();
+
+    // 为每个未配对的选手寻找对手
+    for (let i = 0; i < playerScores.length; i++) {
+      const player1 = playerScores[i];
+      if (paired.has(player1.player)) continue;
+
+      // 寻找最近积分的未配对选手
+      let bestMatch = null;
+      let allowRematch = false;
+      
+      while (!bestMatch) {
+        for (let j = i + 1; j < playerScores.length; j++) {
+          const player2 = playerScores[j];
+          if (paired.has(player2.player)) continue;
+
+          // 检查是否已经对战过
+          const played = await this.havePlayed(tournamentId, player1.player, player2.player);
+
+          if (!played || allowRematch) {
+            bestMatch = player2;
+            break;
+          }
+        }
+
+        // 如果没有找到配对，允许重复对战
+        if (!bestMatch && !allowRematch) {
+          allowRematch = true;
+        } else {
+          break;
+        }
+      }
+
+      // 如果找到配对
+      if (bestMatch) {
+        paired.add(player1.player);
+        paired.add(bestMatch.player);
+        matches.push({
+          player1: new Types.ObjectId(player1.player),
+          player2: new Types.ObjectId(bestMatch.player),
+          winner: null,
+          result: ''
+        });
+      }
+    }
+
+    // 处理剩余未配对的选手（如果有）
+    const unpaired = playerScores.filter(p => !paired.has(p.player));
+    if (unpaired.length === 1) {
+      // 如果只有一名选手未配对，给予轮空
+      matches.push({
+        player1: new Types.ObjectId(unpaired[0].player),
+        player2: new Types.ObjectId(unpaired[0].player), // 自己对阵自己表示轮空
+        winner: new Types.ObjectId(unpaired[0].player), // 轮空自动获胜
+        result: 'BYE'
+      });
+    } else if (unpaired.length > 1) {
+      // 如果有多个未配对的选手，强制配对
+      for (let i = 0; i < unpaired.length - 1; i += 2) {
+        matches.push({
+          player1: new Types.ObjectId(unpaired[i].player),
+          player2: new Types.ObjectId(unpaired[i + 1].player),
+          winner: null,
+          result: ''
+        });
+      }
+      
+      // 如果还有一个落单的选手，给予轮空
+      if (unpaired.length % 2 === 1) {
+        const lastPlayer = unpaired[unpaired.length - 1];
+        matches.push({
+          player1: new Types.ObjectId(lastPlayer.player),
+          player2: new Types.ObjectId(lastPlayer.player),
+          winner: new Types.ObjectId(lastPlayer.player),
+          result: 'BYE'
+        });
+      }
+    }
+
+    return matches;
+  }
+
+  async createNextRound(tournament: ITournament): Promise<IRound[]> {
+    let matches: IMatch[] = [];
+
+    if (tournament.format === TournamentFormat.SWISS) {
+      matches = await this.generateSwissPairings(tournament._id!.toString());
+    } else if (tournament.format === TournamentFormat.ROUNDROBIN) {
+      // 现有的轮循环逻辑
+      matches = this.generateRoundRobinPairings(tournament);
+    } else {
+      // 现有的淘汰赛逻辑
+      matches = this.generateEliminationPairings(tournament);
+    }
+
+    const newRound: IRound = {
+      roundNumber: tournament.rounds.length + 1,
+      matches,
+      completed: false
+    };
+
+    tournament.rounds.push(newRound);
+    await tournament.save();
+
+    return tournament.rounds;
+  }
+
+  // 计算选手得分
+  calculatePlayerScores(tournament: any): Map<string, { score: number, opponentScore: number }> {
+    const scores = new Map<string, { score: number, opponentScore: number }>();
+    
+    // 初始化所有选手得分为0
+    tournament.players.forEach((player: any) => {
+      scores.set(player._id.toString(), { score: 0, opponentScore: 0 });
+    });
+
+    // 遍历所有轮次和比赛，计算得分
+    tournament.rounds.forEach((round: any) => {
+      round.matches.forEach((match: any) => {
+        if (match.winner) {
+          const winnerId = match.winner._id.toString();
+          const loserId = match.player1._id.toString() === winnerId 
+            ? match.player2._id.toString() 
+            : match.player1._id.toString();
+
+          // 获胜者得2分
+          const winnerScore = scores.get(winnerId) || { score: 0, opponentScore: 0 };
+          scores.set(winnerId, {
+            score: winnerScore.score + 2,
+            opponentScore: winnerScore.opponentScore
+          });
+
+          // 失败者得0分
+          if (match.result !== 'BYE') {
+            const loserScore = scores.get(loserId) || { score: 0, opponentScore: 0 };
+            scores.set(loserId, {
+              score: loserScore.score,
+              opponentScore: loserScore.opponentScore
+            });
+          }
+        }
+      });
+    });
+
+    // 计算对手分
+    tournament.rounds.forEach((round: any) => {
+      round.matches.forEach((match: any) => {
+        if (match.winner && match.result !== 'BYE') {
+          const player1Id = match.player1._id.toString();
+          const player2Id = match.player2._id.toString();
+          
+          // 更新双方的对手分
+          const player1Score = scores.get(player1Id);
+          const player2Score = scores.get(player2Id);
+          
+          if (player1Score && player2Score) {
+            scores.set(player1Id, {
+              ...player1Score,
+              opponentScore: player1Score.opponentScore + player2Score.score
+            });
+            
+            scores.set(player2Id, {
+              ...player2Score,
+              opponentScore: player2Score.opponentScore + player1Score.score
+            });
+          }
+        }
+      });
+    });
+
+    return scores;
+  }
+
+  // 获取选手的当前得分
+  getPlayerScore(scores: Map<string, { score: number, opponentScore: number }>, playerId: string): { score: number, opponentScore: number } {
+    return scores.get(playerId.toString()) || { score: 0, opponentScore: 0 };
+  }
+
+  // 查找两个选手之间的直接对局结果
+  findHeadToHeadResult(tournament: any, player1Id: string, player2Id: string): string | null {
+    for (const round of tournament.rounds) {
+      for (const match of round.matches) {
+        // 检查是否是这两个选手的比赛
+        if ((match.player1._id.toString() === player1Id && match.player2._id.toString() === player2Id) ||
+            (match.player1._id.toString() === player2Id && match.player2._id.toString() === player1Id)) {
+          if (match.winner) {
+            return match.winner._id.toString();
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  // 获取排序后的选手列表
+  getSortedPlayers(tournament: any): { player: any, score: number, opponentScore: number, totalScore: number }[] {
+    const scores = this.calculatePlayerScores(tournament);
+    
+    // 找出最高积分
+    let maxScore = 0;
+    scores.forEach(({ score }) => {
+      if (score > maxScore) {
+        maxScore = score;
+      }
+    });
+
+    // 计算轮次数
+    const roundCount = tournament.rounds.length;
+    
+    const playersWithScores = tournament.players.map((player: any) => {
+      const { score, opponentScore } = this.getPlayerScore(scores, player._id.toString());
+      // 总得分＝个人积分＋｛[对手积分总和÷（最高积分／2）]－轮次数｝
+      const totalScore = score + ((opponentScore / (maxScore / 2)) - roundCount);
+      
+      return {
+        player,
+        score,
+        opponentScore,
+        totalScore
+      };
+    });
+
+    // 排序：先按总分，总分相同时按直接对局结果
+    return playersWithScores.sort((a, b) => {
+      // 如果总分不同，按总分排序
+      if (Math.abs(b.totalScore - a.totalScore) > 0.001) { // 使用小数点比较
+        return b.totalScore - a.totalScore;
+      }
+      
+      // 如果总分相同，查找直接对局结果
+      const headToHeadWinner = this.findHeadToHeadResult(tournament, 
+        a.player._id.toString(), 
+        b.player._id.toString()
+      );
+      
+      if (headToHeadWinner) {
+        // 如果 b 是直接对局的胜者，b 排在前面
+        if (headToHeadWinner === b.player._id.toString()) {
+          return 1;
+        }
+        // 如果 a 是直接对局的胜者，a 排在前面
+        if (headToHeadWinner === a.player._id.toString()) {
+          return -1;
+        }
+      }
+      
+      // 如果没有直接对局结果，保持原有顺序
+      return 0;
+    });
   }
 }

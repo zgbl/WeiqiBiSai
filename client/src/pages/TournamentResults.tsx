@@ -21,23 +21,27 @@ interface Player {
 }
 
 interface TournamentResult {
+  rank: number;
   player: Player;
+  score: number;
+  opponentScore: number;
+  totalScore: number;
   wins: number;
   losses: number;
-  rank: number;
 }
 
 interface Tournament {
   _id: string;
   name: string;
-  type: string;
+  format: string;
   results: TournamentResult[];
 }
 
 const TournamentResults = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [tournament, setTournament] = useState<Tournament | null>(null);
+  const [results, setResults] = useState<TournamentResult[]>([]);
+  const [tournamentName, setTournamentName] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -45,7 +49,8 @@ const TournamentResults = () => {
     const fetchResults = async () => {
       try {
         const response = await axios.get(`http://localhost:3000/api/tournaments/${id}/results`);
-        setTournament(response.data);
+        setResults(response.data.results || []);
+        setTournamentName(response.data.name || '');
       } catch (error: any) {
         setError(error.response?.data?.message || 'Failed to fetch tournament results');
       } finally {
@@ -64,14 +69,10 @@ const TournamentResults = () => {
     return <Typography color="error">{error}</Typography>;
   }
 
-  if (!tournament) {
-    return <Typography>Tournament not found</Typography>;
-  }
-
   return (
     <Box sx={{ p: 3 }}>
       <Typography variant="h4" gutterBottom>
-        {tournament.name} - Final Results
+        {tournamentName} - Final Results
       </Typography>
 
       <Paper sx={{ mb: 3 }}>
@@ -81,15 +82,21 @@ const TournamentResults = () => {
               <TableRow>
                 <TableCell>Rank</TableCell>
                 <TableCell>Player</TableCell>
+                <TableCell align="right">Score</TableCell>
+                <TableCell align="right">Opponent Score</TableCell>
+                <TableCell align="right">Total Score</TableCell>
                 <TableCell align="right">Wins</TableCell>
                 <TableCell align="right">Losses</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {tournament.results.map((result) => (
+              {results.map((result) => (
                 <TableRow key={result.player._id}>
                   <TableCell>{result.rank}</TableCell>
                   <TableCell>{result.player.name}</TableCell>
+                  <TableCell align="right">{result.score}</TableCell>
+                  <TableCell align="right">{result.opponentScore}</TableCell>
+                  <TableCell align="right">{result.totalScore.toFixed(2)}</TableCell>
                   <TableCell align="right">{result.wins}</TableCell>
                   <TableCell align="right">{result.losses}</TableCell>
                 </TableRow>
@@ -99,19 +106,11 @@ const TournamentResults = () => {
         </TableContainer>
       </Paper>
 
-      <Button
-        variant="contained"
-        onClick={() => navigate(`/tournament/${id}`)}
-        sx={{ mr: 2 }}
-      >
-        Back to Tournament
-      </Button>
-      <Button
-        variant="outlined"
-        onClick={() => navigate('/tournaments')}
-      >
-        All Tournaments
-      </Button>
+      <Box sx={{ mt: 2 }}>
+        <Button variant="contained" onClick={() => navigate('/')}>
+          Back to Home
+        </Button>
+      </Box>
     </Box>
   );
 };

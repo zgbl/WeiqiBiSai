@@ -4,7 +4,8 @@ import { MongoId, WithMongoId } from './mongoose.types';
 export enum TournamentFormat {
   ROUNDROBIN = 'ROUNDROBIN',
   SINGLEELIMINATION = 'SINGLEELIMINATION',
-  DOUBLEELIMINATION = 'DOUBLEELIMINATION'
+  DOUBLEELIMINATION = 'DOUBLEELIMINATION',
+  SWISS = 'SWISS'
 }
 
 export enum TournamentStatus {
@@ -19,6 +20,9 @@ export interface IMatch {
   player2: MongoId;
   winner?: MongoId | null;
   result: string;
+  player1Score?: number;  // 用于瑞士制
+  player2Score?: number;
+  round?: number;        // 所属轮次
 }
 
 export interface IRound {

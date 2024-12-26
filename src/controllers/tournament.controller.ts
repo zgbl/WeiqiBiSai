@@ -6,9 +6,13 @@ import Tournament from '../models/tournament.model';
 import Player from '../models/player.model';
 import { toObjectId } from '../types/mongoose.types';
 
-const tournamentService = new TournamentService();
-
 export class TournamentController {
+  private tournamentService: TournamentService;
+
+  constructor() {
+    this.tournamentService = new TournamentService();
+  }
+
   // Create a new tournament
   async createTournament(req: Request, res: Response) {
     try {
@@ -20,9 +24,17 @@ export class TournamentController {
         });
       }
 
-      const tournament = await tournamentService.createTournament({
+      // 确保格式统一为大写枚举值
+      let normalizedFormat = format.toUpperCase();
+      if (!Object.values(TournamentFormat).includes(normalizedFormat as TournamentFormat)) {
+        return res.status(400).json({
+          message: `Invalid tournament format. Must be one of: ${Object.values(TournamentFormat).join(', ')}`
+        });
+      }
+
+      const tournament = await this.tournamentService.createTournament({
         name,
-        format: format as TournamentFormat,
+        format: normalizedFormat as TournamentFormat,
         startDate: new Date(startDate),
         endDate: new Date(endDate),
         description,
@@ -43,21 +55,8 @@ export class TournamentController {
   // Get all tournaments
   async getTournaments(req: Request, res: Response) {
     try {
-      const tournaments = await tournamentService.getAllTournaments();
-      res.json(tournaments);
-    } catch (error) {
-      console.error('Error fetching tournaments:', error);
-      res.status(500).json({ 
-        message: error instanceof Error ? error.message : 'An unknown error occurred'
-      });
-    }
-  }
-
-  // Get tournament by ID
-  async getTournamentById(req: Request, res: Response) {
-    try {
-      const tournament = await Tournament.findById(req.params.id)
-        .populate('players', 'name rank')
+      const tournaments = await Tournament.find()
+        .populate('players')
         .populate({
           path: 'rounds.matches.player1',
           select: 'name rank'
@@ -70,18 +69,62 @@ export class TournamentController {
           path: 'rounds.matches.winner',
           select: 'name rank'
         })
-        .lean()
         .exec();
-        
-      if (!tournament) {
-        return res.status(404).json({ message: 'Tournament not found' });
-      }
-      res.json(tournament);
+
+      res.json(tournaments);
     } catch (error) {
-      console.error('Error fetching tournament:', error);
+      console.error('Error fetching tournaments:', error);
       res.status(500).json({ 
         message: error instanceof Error ? error.message : 'An unknown error occurred'
       });
+    }
+  }
+
+  // Get tournament by ID
+  async getTournamentById(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+      const tournament = await Tournament.findById(id)
+        .populate('players')
+        .populate({
+          path: 'rounds.matches.player1',
+          select: 'name rank'
+        })
+        .populate({
+          path: 'rounds.matches.player2',
+          select: 'name rank'
+        })
+        .populate({
+          path: 'rounds.matches.winner',
+          select: 'name rank'
+        })
+        .exec();
+
+      if (!tournament) {
+        return res.status(404).json({ message: 'Tournament not found' });
+      }
+
+      // 计算每个选手的分数
+      const scores = this.tournamentService.calculatePlayerScores(tournament);
+      
+      // 为每个选手添加分数
+      const playersWithScores = tournament.players.map((player: any) => {
+        const { score, gamePoints } = this.tournamentService.getPlayerScore(scores, player._id.toString());
+        return {
+          ...player.toObject(),
+          score,
+          gamePoints
+        };
+      });
+
+      // 更新 tournament 对象中的 players
+      const tournamentData = tournament.toObject();
+      tournamentData.players = playersWithScores;
+
+      res.json(tournamentData);
+    } catch (error) {
+      console.error('Error getting tournament:', error);
+      res.status(500).json({ message: 'Error getting tournament' });
     }
   }
 
@@ -180,7 +223,6 @@ export class TournamentController {
           path: 'players',
           select: 'name rank rating'
         })
-        .lean()
         .exec();
 
       console.log('Updated tournament:', updatedTournament);
@@ -196,185 +238,69 @@ export class TournamentController {
   // Generate next round
   async generateNextRound(req: Request, res: Response) {
     try {
-      const { id: tournamentId } = req.params;
-      console.log('DEBUG: Starting generateNextRound');
-      console.log('DEBUG: Tournament ID:', tournamentId);
+      const { id } = req.params;
+      console.log('Generating next round for tournament:', id);
 
-      const tournament = await Tournament.findById(tournamentId)
-        .populate('players', 'name rank')
+      const tournament = await Tournament.findById(id)
+        .populate('players')
+        .populate('rounds.matches.player1')
+        .populate('rounds.matches.player2')
+        .populate('rounds.matches.winner')
         .exec();
-
-      console.log('DEBUG: Raw tournament:', tournament);
-      console.log('DEBUG: Tournament found:', tournament ? 'yes' : 'no');
-      if (tournament) {
-        console.log('DEBUG: Tournament players array:', tournament.players);
-        console.log('DEBUG: Number of players:', tournament.players.length);
-        tournament.players.forEach((player, index) => {
-          console.log(`DEBUG: Player ${index + 1}:`, {
-            _id: player._id?.toString(),
-            name: player.name,
-            rank: player.rank
-          });
-        });
-      }
 
       if (!tournament) {
         throw new Error('Tournament not found');
       }
 
-      // 获取比赛的最新状态，包括所有轮次信息
-      const fullTournament = await Tournament.findById(tournamentId)
-        .populate({
-          path: 'rounds.matches.player1',
-          select: 'name rank'
-        })
-        .populate({
-          path: 'rounds.matches.player2',
-          select: 'name rank'
-        })
-        .populate({
-          path: 'rounds.matches.winner',
-          select: 'name rank'
-        })
+      console.log('Tournament format:', tournament.format);
+
+      // 检查是否可以生成下一轮
+      const currentRound = tournament.rounds[tournament.rounds.length - 1];
+      if (currentRound) {
+        const isRoundComplete = currentRound.matches.every(match => match.winner != null);
+        if (!isRoundComplete) {
+          throw new Error('Cannot generate next round until all matches in current round have results');
+        }
+        currentRound.completed = true;  // 标记当前轮次为已完成
+      }
+
+      // 生成下一轮比赛
+      let matches: IMatch[] = [];
+      if (tournament.format === TournamentFormat.SWISS) {
+        console.log('Generating Swiss pairings');
+        matches = await this.tournamentService.generateSwissPairings(id);
+      } else {
+        console.log('Generating standard pairings');
+        matches = await this.tournamentService.generatePairings(id);
+      }
+
+      // 创建新的轮次
+      const newRound: IRound = {
+        roundNumber: tournament.rounds.length + 1,
+        matches,
+        completed: false
+      };
+
+      console.log('New round:', newRound);
+
+      // 更新比赛状态
+      tournament.status = TournamentStatus.ONGOING;  // 使用 ONGOING 而不是 IN_PROGRESS
+      tournament.rounds.push(newRound);
+      await tournament.save();
+
+      // 返回更新后的比赛数据
+      const updatedTournament = await Tournament.findById(id)
+        .populate('players')
+        .populate('rounds.matches.player1')
+        .populate('rounds.matches.player2')
+        .populate('rounds.matches.winner')
         .exec();
 
-      if (!fullTournament) {
-        throw new Error('Tournament not found');
-      }
-
-      if (fullTournament.status === TournamentStatus.UPCOMING) {
-        if (fullTournament.format === TournamentFormat.ROUNDROBIN) {
-          const players = tournament.players;
-          console.log('DEBUG: Players array before processing:', players);
-          console.log('DEBUG: Players array type:', Array.isArray(players) ? 'Array' : typeof players);
-          
-          const n = players.length;
-          console.log('DEBUG: Number of players:', n);
-          
-          if (n < 2) {
-            throw new Error('Need at least 2 players to start the tournament');
-          }
-          
-          // Generate all rounds of matches
-          const rounds = [];
-          const totalRounds = n % 2 === 0 ? n - 1 : n;
-          console.log('DEBUG: Total rounds:', totalRounds);
-          
-          // Create a copy of players array for rotation
-          let roundPlayers = [...players];
-          if (n % 2 !== 0) {
-            roundPlayers.push(null); // Add a bye for odd number of players
-          }
-          
-          const numPairs = Math.floor(roundPlayers.length / 2);
-          console.log('DEBUG: Players for pairing:', roundPlayers);
-          
-          for (let round = 0; round < totalRounds; round++) {
-            console.log('DEBUG: Generating round:', round + 1);
-            const matches = [];
-            
-            for (let i = 0; i < numPairs; i++) {
-              const player1 = roundPlayers[i];
-              const player2 = roundPlayers[roundPlayers.length - 1 - i];
-              
-              console.log('DEBUG: Match pairing:', {
-                player1: player1 ? {
-                  _id: player1._id,
-                  name: player1.name,
-                  rank: player1.rank
-                } : 'bye',
-                player2: player2 ? {
-                  _id: player2._id,
-                  name: player2.name,
-                  rank: player2.rank
-                } : 'bye'
-              });
-              
-              matches.push({
-                player1: player1 ? player1._id : null,
-                player2: player2 ? player2._id : null,
-                winner: null,
-                result: ''
-              });
-            }
-            
-            console.log('DEBUG: Round matches:', matches);
-            
-            rounds.push({
-              roundNumber: round + 1,
-              matches,
-              completed: false
-            });
-            
-            // Rotate players for next round (keeping first player fixed)
-            const firstPlayer = roundPlayers[0];
-            const remainingPlayers = roundPlayers.slice(1);
-            remainingPlayers.unshift(remainingPlayers.pop()!);
-            roundPlayers = [firstPlayer, ...remainingPlayers];
-          }
-          
-          console.log('DEBUG: Final rounds:', rounds);
-          
-          tournament.rounds = rounds;
-          tournament.status = TournamentStatus.ONGOING;
-          
-          const updatedTournament = await tournament.save();
-          console.log('DEBUG: Saved tournament:', updatedTournament);
-          
-          // Return populated tournament data
-          const populatedTournament = await Tournament.findById(updatedTournament._id)
-            .populate('players', 'name rank')
-            .populate('rounds.matches.player1', 'name rank')
-            .populate('rounds.matches.player2', 'name rank')
-            .populate('rounds.matches.winner', 'name rank')
-            .lean()
-            .exec();
-          
-          console.log('DEBUG: Final populated tournament:', populatedTournament);
-          
-          return res.json(populatedTournament);
-        }
-        
-        throw new Error('Unsupported tournament format');
-      }
-
-      const currentRound = tournament.rounds[tournament.rounds.length - 1];
-      if (!currentRound?.completed) {
-        throw new Error('Current round is not complete');
-      }
-
-      if (tournament.format === TournamentFormat.ROUNDROBIN) {
-        const nextRoundIndex = tournament.rounds.findIndex(r => !r.completed);
-        if (nextRoundIndex === -1) {
-          throw new Error('All rounds are completed');
-        }
-
-        const updatedTournament = await Tournament.findById(tournamentId)
-          .populate('players', 'name rank')
-          .populate({
-            path: 'rounds.matches.player1',
-            select: 'name rank'
-          })
-          .populate({
-            path: 'rounds.matches.player2',
-            select: 'name rank'
-          })
-          .populate({
-            path: 'rounds.matches.winner',
-            select: 'name rank'
-          })
-          .lean()
-          .exec();
-
-        res.json(updatedTournament);
-        return;
-      }
-
-      throw new Error('Unsupported tournament format');
+      res.json(updatedTournament);
     } catch (error) {
-      console.error('DEBUG: Error in generateNextRound:', error);
-      res.status(400).json({ 
-        message: error instanceof Error ? error.message : 'An unknown error occurred'
+      console.error('Error generating next round:', error);
+      res.status(500).json({ 
+        message: error instanceof Error ? error.message : 'Failed to generate next round' 
       });
     }
   }
@@ -413,9 +339,6 @@ export class TournamentController {
         const match = round.matches.find(m => m._id.toString() === matchId);
         if (match) {
           console.log('Found match:', match);
-          if (match.winner) {
-            return res.status(400).json({ message: 'Match result already recorded' });
-          }
 
           // 验证 winnerId 是否是这场比赛的选手之一
           const isValidWinner = 
@@ -433,7 +356,7 @@ export class TournamentController {
             });
           }
 
-          match.winner = winnerId;
+          match.winner = new Types.ObjectId(winnerId);  // 使用 ObjectId
           updatedMatch = match;
           matchFound = true;
           break;
@@ -446,10 +369,14 @@ export class TournamentController {
 
       await tournament.save();
 
-      res.json({
-        message: 'Match result recorded successfully',
-        match: updatedMatch
-      });
+      // 返回更新后的比赛数据
+      const updatedTournament = await Tournament.findById(tournamentId)
+        .populate('rounds.matches.player1')
+        .populate('rounds.matches.player2')
+        .populate('rounds.matches.winner')
+        .exec();
+
+      res.json(updatedTournament);
     } catch (error) {
       console.error('Error recording match result:', error);
       res.status(500).json({ message: 'Error recording match result', error: error.message });
@@ -596,7 +523,6 @@ export class TournamentController {
           path: 'rounds.matches.winner',
           select: 'name rank'
         })
-        .lean()
         .exec();
 
       res.json(updatedTournament);
@@ -683,81 +609,49 @@ export class TournamentController {
   async getTournamentResults(req: Request, res: Response) {
     try {
       const { id } = req.params;
-
       const tournament = await Tournament.findById(id)
         .populate('players')
-        .populate('rounds.matches.player1')
-        .populate('rounds.matches.player2')
-        .populate('rounds.matches.winner')
+        .populate({
+          path: 'rounds.matches.player1',
+          select: 'name rank'
+        })
+        .populate({
+          path: 'rounds.matches.player2',
+          select: 'name rank'
+        })
+        .populate({
+          path: 'rounds.matches.winner',
+          select: 'name rank'
+        })
         .exec();
 
       if (!tournament) {
         return res.status(404).json({ message: 'Tournament not found' });
       }
 
-      // 计算每个选手的胜负场次
-      const playerStats = new Map();
-
-      // 初始化所有选手的统计数据
-      tournament.players.forEach(player => {
-        playerStats.set(player._id.toString(), {
-          playerId: player._id.toString(),
-          player: {
-            _id: player._id,
-            name: player.name,
-            rank: player.rank
-          },
-          wins: 0,
-          losses: 0
-        });
-      });
-
-      // 统计每场比赛的结果
-      tournament.rounds.forEach(round => {
-        round.matches.forEach(match => {
-          if (match.winner) {
-            const winnerId = match.winner._id.toString();
-            const player1Id = match.player1._id.toString();
-            const player2Id = match.player2._id.toString();
-
-            // 获取胜者和负者的ID
-            const loserId = player1Id === winnerId ? player2Id : player1Id;
-
-            const winnerStats = playerStats.get(winnerId);
-            const loserStats = playerStats.get(loserId);
-
-            if (winnerStats) {
-              winnerStats.wins += 1;
-              console.log(`Player ${winnerStats.player.name} won against ${loserStats?.player.name}`);
-            }
-            if (loserStats) {
-              loserStats.losses += 1;
-              console.log(`Player ${loserStats.player.name} lost to ${winnerStats?.player.name}`);
-            }
-          }
-        });
-      });
-
-      // 转换为数组并排序
-      const results = Array.from(playerStats.values())
-        .sort((a, b) => {
-          // 首先按胜场数降序
-          if (b.wins !== a.wins) return b.wins - a.wins;
-          // 如果胜场数相同，按负场数升序
-          if (a.losses !== b.losses) return a.losses - b.losses;
-          // 如果胜负场数都相同，按段位降序排列（假设段位格式为 "Nd"，N 越大段位越高）
-          const rankA = parseInt(a.player.rank) || 0;
-          const rankB = parseInt(b.player.rank) || 0;
-          return rankB - rankA;
-        })
-        .map((stats, index) => ({
-          player: stats.player,
-          wins: stats.wins,
-          losses: stats.losses,
-          rank: index + 1
-        }));
-
-      console.log('Final results:', results);
+      const sortedPlayers = this.tournamentService.getSortedPlayers(tournament);
+      const results = sortedPlayers.map((item, index) => ({
+        rank: index + 1,
+        player: {
+          _id: item.player._id,
+          name: item.player.name,
+          rank: item.player.rank
+        },
+        score: item.score,
+        opponentScore: item.opponentScore,
+        totalScore: item.totalScore,
+        wins: tournament.rounds.reduce((wins, round) => 
+          wins + round.matches.filter(match => 
+            match.winner && match.winner._id.toString() === item.player._id.toString()
+          ).length, 0),
+        losses: tournament.rounds.reduce((losses, round) => 
+          losses + round.matches.filter(match => 
+            match.winner && 
+            (match.player1._id.toString() === item.player._id.toString() || 
+             match.player2._id.toString() === item.player._id.toString()) &&
+            match.winner._id.toString() !== item.player._id.toString()
+          ).length, 0)
+      }));
 
       res.json({
         _id: tournament._id,
@@ -767,7 +661,31 @@ export class TournamentController {
       });
     } catch (error) {
       console.error('Error getting tournament results:', error);
-      res.status(500).json({ message: 'Error getting tournament results', error: error.message });
+      res.status(500).json({ message: 'Error getting tournament results' });
+    }
+  }
+
+  // 临时方法：统一比赛格式
+  async normalizeFormats(req: Request, res: Response) {
+    try {
+      // 更新所有 knockout 为 SINGLEELIMINATION
+      await Tournament.updateMany(
+        { format: 'knockout' },
+        { $set: { format: TournamentFormat.SINGLEELIMINATION } }
+      );
+
+      // 更新所有 roundrobin 为 ROUNDROBIN
+      await Tournament.updateMany(
+        { format: 'roundrobin' },
+        { $set: { format: TournamentFormat.ROUNDROBIN } }
+      );
+
+      res.json({ message: '比赛格式已统一更新' });
+    } catch (error) {
+      console.error('Error normalizing tournament formats:', error);
+      res.status(500).json({ 
+        message: error instanceof Error ? error.message : 'An unknown error occurred'
+      });
     }
   }
 }
