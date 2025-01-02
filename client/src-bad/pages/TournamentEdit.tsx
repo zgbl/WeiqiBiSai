@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import {
   Typography,
   TextField,
@@ -14,15 +14,37 @@ import {
 } from '@mui/material';
 import axios from 'axios';
 
-const NewTournament = () => {
+const TournamentEdit = () => {
   const navigate = useNavigate();
+  const { id } = useParams();
   const [formData, setFormData] = useState({
     name: '',
-    format: 'ROUNDROBIN',
+    format: '',
     startDate: '',
     endDate: '',
     description: '',
   });
+
+  useEffect(() => {
+    const fetchTournament = async () => {
+      try {
+        const response = await axios.get(`http://localhost:3000/api/tournaments/${id}`);
+        const tournament = response.data;
+        setFormData({
+          name: tournament.name,
+          format: tournament.format.toLowerCase(),
+          startDate: tournament.startDate.split('T')[0],
+          endDate: tournament.endDate.split('T')[0],
+          description: tournament.description || '',
+        });
+      } catch (error) {
+        console.error('Error fetching tournament:', error);
+        navigate('/');
+      }
+    };
+
+    fetchTournament();
+  }, [id, navigate]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | { name?: string; value: unknown }>) => {
     const { name, value } = e.target;
@@ -35,18 +57,17 @@ const NewTournament = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const response = await axios.post('http://localhost:3000/api/tournaments', formData);
-      console.log('Tournament created:', response.data);
-      navigate('/');
+      await axios.put(`http://localhost:3000/api/tournaments/${id}`, formData);
+      navigate(`/tournament/${id}`);
     } catch (error: any) {
-      console.error('Error creating tournament:', error.response?.data || error.message);
+      console.error('Error updating tournament:', error.response?.data || error.message);
     }
   };
 
   return (
     <div>
       <Typography variant="h4" component="h1" gutterBottom>
-        Create New Tournament
+        Edit Tournament
       </Typography>
 
       <Paper sx={{ p: 3 }}>
@@ -72,30 +93,13 @@ const NewTournament = () => {
                   onChange={handleChange}
                   required
                 >
-                  <MenuItem value="ROUNDROBIN">单循环赛 Round Robin</MenuItem>
-                  <MenuItem value="SINGLEELIMINATION">单淘汰赛 Single Elimination</MenuItem>
-                  <MenuItem value="DOUBLEELIMINATION">双淘汰赛 Double Elimination</MenuItem>
-                  <MenuItem value="SWISS">积分循环赛 Swiss System</MenuItem>
-                  <MenuItem value="MCMAHON">麦克马洪制 McMahon</MenuItem> {/* Add McMahon */}
+                  <MenuItem value="knockout">Knockout</MenuItem>
+                  <MenuItem value="roundrobin">Round Robin</MenuItem>
+                  <MenuItem value="swiss">Swiss</MenuItem>
+                  <MenuItem value="mcmahon">McMahon</MenuItem>
                 </Select>
               </FormControl>
             </Grid>
-
-            {/* Conditionally render Upper Bar input for McMahon format */}
-              {formData.format === 'MCMAHON' && (
-                <Grid item xs={12}>
-                  <TextField
-                    fullWidth
-                    label="Upper Bar Rating"
-                    name="upperBar"
-                    type="number" // Important: Use type="number"
-                    value={formData.upperBar}
-                    onChange={handleChange}
-                    required
-                    helperText="高于此等级的选手将获得相同的起始分数"
-                  />
-                </Grid>
-              )}
 
             <Grid item xs={12} sm={6}>
               <TextField
@@ -128,25 +132,27 @@ const NewTournament = () => {
                 fullWidth
                 label="Description"
                 name="description"
-                multiline
-                rows={4}
                 value={formData.description}
                 onChange={handleChange}
-                helperText={
-                  formData.format === 'SWISS' ? 
-                  '积分循环赛说明：每轮根据选手积分进行配对，胜者得1分，负者得0分。总轮数由选手数量决定。' : 
-                  '请输入比赛说明'
-                }
+                multiline
+                rows={4}
               />
             </Grid>
 
             <Grid item xs={12}>
               <Box sx={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
-                <Button onClick={() => navigate('/')} variant="outlined">
+                <Button
+                  variant="outlined"
+                  onClick={() => navigate(`/tournament/${id}`)}
+                >
                   Cancel
                 </Button>
-                <Button type="submit" variant="contained" color="primary">
-                  Create Tournament
+                <Button
+                  type="submit"
+                  variant="contained"
+                  color="primary"
+                >
+                  Save Changes
                 </Button>
               </Box>
             </Grid>
@@ -157,4 +163,4 @@ const NewTournament = () => {
   );
 };
 
-export default NewTournament;
+export default TournamentEdit;
