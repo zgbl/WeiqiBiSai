@@ -16,7 +16,19 @@ export class TournamentController {
   // Create a new tournament
   async createTournament(req: Request, res: Response) {
     try {
-      const { name, format, startDate, endDate, description } = req.body;
+      const { 
+        name, 
+        format, 
+        startDate, 
+        endDate, 
+        description,
+        // McMahon specific fields
+        upperBar,
+        initialScore,
+        minimumScore,
+        roundCount,
+        groups
+      } = req.body;
       
       if (!name || !format || !startDate || !endDate) {
         return res.status(400).json({ 
@@ -32,6 +44,15 @@ export class TournamentController {
         });
       }
 
+      // 验证 McMahon 特定字段
+      if (normalizedFormat === TournamentFormat.MCMAHON) {
+        if (upperBar === undefined || initialScore === undefined || minimumScore === undefined || roundCount === undefined) {
+          return res.status(400).json({
+            message: 'McMahon tournament requires: upperBar, initialScore, minimumScore, roundCount'
+          });
+        }
+      }
+
       const tournament = await this.tournamentService.createTournament({
         name,
         format: normalizedFormat as TournamentFormat,
@@ -40,7 +61,16 @@ export class TournamentController {
         description,
         status: TournamentStatus.UPCOMING,
         players: [],
-        rounds: []
+        rounds: [],
+        // McMahon specific fields
+        ...(normalizedFormat === TournamentFormat.MCMAHON && {
+          upperBar,
+          initialScore,
+          minimumScore,
+          roundCount,
+          groups: groups || ['业余组', '职业组'], // 默认分组
+          playerScores: [] // 初始化空的选手分数列表
+        })
       });
 
       res.status(201).json(tournament);
@@ -59,15 +89,15 @@ export class TournamentController {
         .populate('players')
         .populate({
           path: 'rounds.matches.player1',
-          select: 'name rank'
+          select: 'name rank _id'
         })
         .populate({
           path: 'rounds.matches.player2',
-          select: 'name rank'
+          select: 'name rank _id'
         })
         .populate({
           path: 'rounds.matches.winner',
-          select: 'name rank'
+          select: 'name rank _id'
         })
         .exec();
 
@@ -88,15 +118,15 @@ export class TournamentController {
         .populate('players')
         .populate({
           path: 'rounds.matches.player1',
-          select: 'name rank'
+          select: 'name rank _id'
         })
         .populate({
           path: 'rounds.matches.player2',
-          select: 'name rank'
+          select: 'name rank _id'
         })
         .populate({
           path: 'rounds.matches.winner',
-          select: 'name rank'
+          select: 'name rank _id'
         })
         .exec();
 
@@ -104,16 +134,127 @@ export class TournamentController {
         return res.status(404).json({ message: 'Tournament not found' });
       }
 
-      // 计算每个选手的分数
-      const scores = this.tournamentService.calculatePlayerScores(tournament);
+      // 获取当前轮次编号
+      const currentRoundNumber = tournament.rounds.length;
       
+      // 将 playerScores 转换为 Map 以便快速查找
+      const playerScores = new Map(
+        tournament.playerScores?.map(score => [
+          score.player.toString(),
+          {
+            currentScore: score.currentScore || 0,
+            wins: score.wins || 0,
+            losses: score.losses || 0
+          }
+        ]) || []
+      );
+
+      // 获取所有玩家信息
+      const players = tournament.players;
+      
+      console.log('从数据库读取的 playerScores:', Array.from(playerScores.entries()).map(([playerId, score]) => {
+        const player = players.find(p => p._id.toString() === playerId);
+        return {
+          playerName: player ? player.name : 'Unknown Player',
+          currentScore: score.currentScore
+        };
+      }));
+
       // 为每个选手添加分数
       const playersWithScores = tournament.players.map((player: any) => {
-        const { score, gamePoints } = this.tournamentService.getPlayerScore(scores, player._id.toString());
+        const playerScore = playerScores.get(player._id.toString()) || {
+          currentScore: 0,
+          wins: 0,
+          losses: 0
+        };
+
+        // 计算上一轮得分
+        let previousScore = playerScore.currentScore;  //把选手得分转成上一轮得分，准备更新得分
+        if (currentRoundNumber > 1) {
+          // 在倒数第二轮的比赛中找到这个选手的比赛
+          const lastRound = tournament.rounds[currentRoundNumber - 2];
+          console.log('检查倒数第二轮比赛（倒查两轮，实际不是倒两轮:', {
+            roundNumber: currentRoundNumber - 1,
+            matchCount: lastRound?.matches?.length || 0
+          });
+
+          // 打印所有比赛的详细信息
+          console.log('倒数第二轮所有比赛的原始数据:', lastRound.matches.map(m => ({
+            matchId: m._id.toString(),
+            //player1: m.player1?._id?.toString(),
+            player1: {
+              id: m.player1?._id?.toString(),
+              name: m.player1?.name,
+              rank: m.player1?.rank
+            },
+            //player2: m.player2?._id?.toString(),
+            player2: {
+              id: m.player2?._id?.toString(),
+              name: m.player2?.name,
+              rank: m.player2?.rank
+            },
+            winner: {
+              value: m.winner,
+              type: typeof m.winner,
+              isObjectId: m.winner instanceof Types.ObjectId,
+              toString: m.winner?.toString(),
+              raw: m.winner
+            },
+            rawMatch: m
+          })));
+
+          const match = lastRound.matches.find(m => 
+            m.player1?._id?.toString() === player._id.toString() || 
+            m.player2?._id?.toString() === player._id.toString()
+          );
+          
+          if (match) {
+            console.log('找到选手的比赛:', {
+              playerName: player.name,
+              matchId: match._id.toString(),
+              player1Id: match.player1?._id?.toString(),
+              player2Id: match.player2?._id?.toString(),
+              winnerId: match.winner?.toString()
+            });
+
+            if (match.winner) {
+              console.log('比赛有胜者:', {
+                playerName: player.name,
+                winnerId: match.winner.toString(),
+                isThisPlayerWinner: match.winner.toString() === player._id.toString()
+              });
+
+              // 如果这个选手赢了，那么当前分数比上一轮多2分
+              if (match.winner.toString() === player._id.toString()) {
+                //previousScore = playerScore.currentScore - 2; //这个算法莫名其妙，不知道AI是要干什么
+                playerScore.currentScore = previousScore + 2;
+                console.log('选手赢了, 当前分数比上一轮多2分');
+              }
+            } else {
+              console.log('比赛没有胜者');
+            }
+          } else {
+            console.log('没有找到选手的比赛:', {
+              playerName: player.name,
+              playerId: player._id.toString()
+            });
+          }
+        }
+        // 添加日志显示得分变化
+        console.log('选手得分情况:', {
+          name: player.name,
+          playerId: player._id.toString(),
+          roundNumber: currentRoundNumber,
+          previousScore: previousScore,
+          currentScore: playerScore.currentScore,
+          delta: playerScore.currentScore - previousScore
+        });
+
         return {
           ...player.toObject(),
-          score,
-          gamePoints
+          currentScore: playerScore.currentScore,
+          wins: playerScore.wins,
+          losses: playerScore.losses
         };
       });
 
@@ -241,22 +382,18 @@ export class TournamentController {
       const { id } = req.params;
       console.log('Generating next round for tournament:', id);
 
-      const tournament = await Tournament.findById(id)
-        .populate('players')
-        .populate('rounds.matches.player1')
-        .populate('rounds.matches.player2')
-        .populate('rounds.matches.winner')
-        .exec();
-
+      // 获取比赛信息
+      const tournament = await Tournament.findById(id);
       if (!tournament) {
-        throw new Error('Tournament not found');
+        return res.status(404).json({ message: 'Tournament not found' });
       }
 
       console.log('Tournament format:', tournament.format);
+      //console.log('Current round:', tournament.rounds?.length > 0 ? tournament.rounds[tournament.rounds.length - 1] : 'undefined');
 
-      // 检查是否可以生成下一轮
-      const currentRound = tournament.rounds[tournament.rounds.length - 1];
-      if (currentRound) {
+      // 检查当前轮次是否完成
+      if (tournament.rounds?.length > 0) {
+        const currentRound = tournament.rounds[tournament.rounds.length - 1];
         const isRoundComplete = currentRound.matches.every(match => match.winner != null);
         if (!isRoundComplete) {
           throw new Error('Cannot generate next round until all matches in current round have results');
@@ -265,43 +402,16 @@ export class TournamentController {
       }
 
       // 生成下一轮比赛
-      let matches: IMatch[] = [];
-      if (tournament.format === TournamentFormat.SWISS) {
-        console.log('Generating Swiss pairings');
-        matches = await this.tournamentService.generateSwissPairings(id);
-      } else {
-        console.log('Generating standard pairings');
-        matches = await this.tournamentService.generatePairings(id);
+      const updatedTournament = await this.tournamentService.generatePairings(id);
+      if (!updatedTournament) {
+        throw new Error('Failed to generate pairings');
       }
 
-      // 创建新的轮次
-      const newRound: IRound = {
-        roundNumber: tournament.rounds.length + 1,
-        matches,
-        completed: false
-      };
-
-      console.log('New round:', newRound);
-
-      // 更新比赛状态
-      tournament.status = TournamentStatus.ONGOING;  // 使用 ONGOING 而不是 IN_PROGRESS
-      tournament.rounds.push(newRound);
-      await tournament.save();
-
-      // 返回更新后的比赛数据
-      const updatedTournament = await Tournament.findById(id)
-        .populate('players')
-        .populate('rounds.matches.player1')
-        .populate('rounds.matches.player2')
-        .populate('rounds.matches.winner')
-        .exec();
-
+      // 返回更新后的比赛信息
       res.json(updatedTournament);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error generating next round:', error);
-      res.status(500).json({ 
-        message: error instanceof Error ? error.message : 'Failed to generate next round' 
-      });
+      res.status(500).json({ message: error.message });
     }
   }
 
@@ -333,7 +443,7 @@ export class TournamentController {
       }
 
       let matchFound = false;
-      let updatedMatch = null;
+      let currentMatch = null;
 
       for (const round of tournament.rounds) {
         const match = round.matches.find(m => m._id.toString() === matchId);
@@ -356,8 +466,8 @@ export class TournamentController {
             });
           }
 
-          match.winner = new Types.ObjectId(winnerId);  // 使用 ObjectId
-          updatedMatch = match;
+          match.winner = new Types.ObjectId(winnerId);  // 转换为 ObjectId
+          currentMatch = match;
           matchFound = true;
           break;
         }
@@ -369,14 +479,42 @@ export class TournamentController {
 
       await tournament.save();
 
-      // 返回更新后的比赛数据
-      const updatedTournament = await Tournament.findById(tournamentId)
-        .populate('rounds.matches.player1')
-        .populate('rounds.matches.player2')
-        .populate('rounds.matches.winner')
-        .exec();
+      console.log('Tournament saved with updated match:', {
+        matchId: currentMatch._id.toString(),
+        winner: currentMatch.winner,
+        winnerType: typeof currentMatch.winner,
+        isObjectId: currentMatch.winner instanceof Types.ObjectId
+      });
 
-      res.json(updatedTournament);
+      // 调用 updateTournamentResults 来更新得分
+
+      const updatedTournament = await this.tournamentService.updateTournamentResults(
+        tournamentId,
+        matchId,
+        winnerId,
+        ''  // 如果没有 result 字段，就传空字符串
+      );
+
+      if (!updatedTournament) {
+        return res.status(500).json({ message: 'Failed to update tournament results' });
+      }
+
+      // 从更新后的 tournament 中找到对应的 match
+      const savedMatch = updatedTournament.rounds
+        .flatMap(r => r.matches)
+        .find(m => m._id.toString() === matchId);
+
+      console.log('Updated tournament result:', {
+        tournamentId,
+        matchId,
+        winner: savedMatch?.winner,
+        playerScores: updatedTournament.playerScores
+      });
+
+      res.json({
+        message: 'Match result recorded successfully',
+        tournament: updatedTournament
+      });
     } catch (error) {
       console.error('Error recording match result:', error);
       res.status(500).json({ message: 'Error recording match result', error: error.message });
@@ -416,7 +554,7 @@ export class TournamentController {
       }
 
       let matchFound = false;
-      let updatedMatch = null;
+      //let updatedMatch = null;
 
       for (const round of tournament.rounds) {
         const match = round.matches.find(m => m._id.toString() === matchId);
@@ -455,8 +593,8 @@ export class TournamentController {
             });
           }
 
-          match.winner = winnerId;
-          updatedMatch = match;
+          match.winner = new Types.ObjectId(winnerId);  // 转换为 ObjectId
+          currentMatch = match;
           matchFound = true;
           break;
         }
@@ -467,17 +605,62 @@ export class TournamentController {
         return res.status(404).json({ message: 'Match not found' });
       }
 
-      console.log('Saving tournament with updated match:', {
-        matchId: updatedMatch._id.toString(),
-        winner: updatedMatch.winner
+      await tournament.save();
+
+      console.log('Tournament saved with updated match:', {
+        matchId: currentMatch._id.toString(),
+        winner: currentMatch.winner,
+        winnerType: typeof currentMatch.winner,
+        isObjectId: currentMatch.winner instanceof Types.ObjectId
       });
 
-      await tournament.save();
+      // 调用 updateTournamentResults 来更新得分
+
+      const updatedTournament = await this.tournamentService.updateTournamentResults(
+        tournamentId,
+        matchId,
+        winnerId,
+        ''  // 如果没有 result 字段，就传空字符串
+      );
+
+      if (!updatedTournament) {
+        return res.status(500).json({ message: 'Failed to update tournament results' });
+      }
+
+      // 从更新后的 tournament 中找到对应的 match
+      //const updatedMatch = updatedTournament.rounds
+      const savedMatch = updatedTournament.rounds
+        .flatMap(r => r.matches)
+        .find(m => m._id.toString() === matchId);
+
+      console.log('Updated tournament result:', {
+        tournamentId,
+        matchId,
+        winner: savedMatch?.winner,
+        playerScores: updatedTournament.playerScores
+      });
 
       res.json({
         message: 'Match result recorded successfully',
-        match: updatedMatch
+        tournament: updatedTournament
       });
+
+      /*
+      await this.tournamentService.updateTournamentResults(
+        tournamentId,
+        matchId,
+        winnerId,
+        updatedMatch.result || ''
+      );
+
+     //await tournament.save();   //不要再save (对吗？) TXY 202/01/07
+
+      res.json({
+        message: 'Match result recorded successfully',
+        //match: updatedMatch
+        tournament: updatedTournament
+      });  */
+
     } catch (error) {
       console.error('Error recording match result:', error);
       res.status(500).json({ message: 'Error recording match result', error: error.message });
@@ -513,15 +696,15 @@ export class TournamentController {
         .populate('players', 'name rank')
         .populate({
           path: 'rounds.matches.player1',
-          select: 'name rank'
+          select: 'name rank _id'
         })
         .populate({
           path: 'rounds.matches.player2',
-          select: 'name rank'
+          select: 'name rank _id'
         })
         .populate({
           path: 'rounds.matches.winner',
-          select: 'name rank'
+          select: 'name rank _id'
         })
         .exec();
 
@@ -613,15 +796,15 @@ export class TournamentController {
         .populate('players')
         .populate({
           path: 'rounds.matches.player1',
-          select: 'name rank'
+          select: 'name rank _id'
         })
         .populate({
           path: 'rounds.matches.player2',
-          select: 'name rank'
+          select: 'name rank _id'
         })
         .populate({
           path: 'rounds.matches.winner',
-          select: 'name rank'
+          select: 'name rank _id'
         })
         .exec();
 
