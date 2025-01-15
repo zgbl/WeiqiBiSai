@@ -13,6 +13,7 @@ import {
   Box,
 } from '@mui/material';
 import axios from 'axios';
+import { api } from '../services/api';
 
 const TournamentEdit = () => {
   const navigate = useNavigate();
@@ -28,7 +29,7 @@ const TournamentEdit = () => {
   useEffect(() => {
     const fetchTournament = async () => {
       try {
-        const response = await axios.get(`http://localhost:3000/api/tournaments/${id}`);
+        const response = await api.get(`/tournaments/${id}`);
         const tournament = response.data;
         setFormData({
           name: tournament.name,
@@ -57,7 +58,7 @@ const TournamentEdit = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await axios.put(`http://localhost:3000/api/tournaments/${id}`, formData);
+      await api.put(`/tournaments/${id}`, formData);
       navigate(`/tournament/${id}`);
     } catch (error: any) {
       console.error('Error updating tournament:', error.response?.data || error.message);

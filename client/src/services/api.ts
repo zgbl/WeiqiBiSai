@@ -1,21 +1,29 @@
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
-
-// Get auth token from localStorage
-const getAuthToken = () => localStorage.getItem('token');
-
-const api = axios.create({
-  baseURL: API_BASE_URL,
+// Create axios instance with base configuration
+export const api = axios.create({
+  baseURL: '/api',  // This will be automatically proxied by Vite
   headers: {
     'Content-Type': 'application/json',
   },
+  transformRequest: [
+    (data, headers) => {
+      console.log('Request:', { url: api.defaults.baseURL, data, headers });
+      return JSON.stringify(data);
+    }
+  ],
+  transformResponse: [
+    (data) => {
+      console.log('Response:', { data });
+      return JSON.parse(data);
+    }
+  ]
 });
 
 // Add auth token to requests if available
 api.interceptors.request.use(
   (config) => {
-    const token = getAuthToken();
+    const token = localStorage.getItem('token');
     if (token && config.headers) {
       config.headers['Authorization'] = `Bearer ${token}`;
     }
@@ -92,7 +100,9 @@ export const TournamentAPI = {
   },
 
   deleteRound: async (tournamentId: string, roundNumber: number) => {
+    console.log('Calling deleteRound API:', { tournamentId, roundNumber });
     const response = await api.delete(`/tournaments/${tournamentId}/rounds/${roundNumber}`);
+    console.log('DeleteRound API response:', response.data);
     return response.data;
   }
 };
@@ -163,5 +173,3 @@ export enum TournamentStatus {
   ONGOING = 'ONGOING',
   COMPLETED = 'COMPLETED'
 }
-
-export default api;

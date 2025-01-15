@@ -25,6 +25,7 @@ import {
 import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
 import axios from 'axios';
+import { api } from '../services/api';
 
 interface Player {
   _id: string;
@@ -46,7 +47,7 @@ const Players = () => {
 
   const fetchPlayers = async () => {
     try {
-      const response = await axios.get('http://localhost:3000/api/tournaments/players');
+      const response = await api.get('/tournaments/players');
       setPlayers(response.data);
     } catch (error) {
       console.error('Error fetching players:', error);
@@ -67,7 +68,7 @@ const Players = () => {
         return;
       }
 
-      await axios.post('http://localhost:3000/api/tournaments/players', newPlayer);
+      await api.post('/tournaments/players', newPlayer);
       setOpenDialog(false);
       setNewPlayer({ name: '', rank: '' });
       fetchPlayers();
@@ -81,7 +82,7 @@ const Players = () => {
 
   const handleDeletePlayer = async (playerId: string) => {
     try {
-      await axios.delete(`http://localhost:3000/api/tournaments/players/${playerId}`);
+      await api.delete(`/tournaments/players/${playerId}`);
       fetchPlayers();
       setSnackbarMessage('Player deleted successfully');
       setSnackbarOpen(true);

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Typography, Button, Card, CardContent, Grid, CardActionArea } from '@mui/material';
 import { Link as RouterLink, useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import { api } from '../services/api';
 
 interface Tournament {
   _id: string;
@@ -21,7 +21,7 @@ const Home = () => {
   useEffect(() => {
     const fetchTournaments = async () => {
       try {
-        const response = await axios.get('http://localhost:3000/api/tournaments');
+        const response = await api.get('/tournaments');
         setTournaments(response.data);
         setError('');
       } catch (error: any) {

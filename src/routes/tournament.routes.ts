@@ -32,5 +32,6 @@ router.put('/:id/matches/:matchId/result', tournamentController.recordMatchResul
 router.put('/:id/matches/:matchId', tournamentController.updateMatchResult.bind(tournamentController));
 router.delete('/:id/rounds/:roundNumber', tournamentController.deleteRound.bind(tournamentController));
 router.get('/:id/results', tournamentController.getTournamentResults.bind(tournamentController));
+router.put('/:id/end', tournamentController.endTournament.bind(tournamentController));
 
 export default router;

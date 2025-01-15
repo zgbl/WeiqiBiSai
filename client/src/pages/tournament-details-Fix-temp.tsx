@@ -22,7 +22,7 @@ import {
   Snackbar,
   Stack,
 } from '@mui/material';
-import axios from 'axios';
+import { api } from '../services/api';
 
 // ... (keep all interfaces and enums the same)
 
@@ -38,11 +38,11 @@ const TournamentDetails = () => {
           return;
         }
         // First create the new player
-        const playerResponse = await axios.post('http://localhost:3000/api/tournaments/players', newPlayer);
+        const playerResponse = await api.post('/tournaments/players', newPlayer);
         const newPlayerId = playerResponse.data._id;
         
         // Then add the player to the tournament
-        await axios.post(`http://localhost:3000/api/tournaments/${id}/addPlayer`, {
+        await api.post(`/tournaments/${id}/addPlayer`, {
           playerId: newPlayerId
         });
       } else {
@@ -51,7 +51,7 @@ const TournamentDetails = () => {
           return;
         }
         // Add existing player to tournament
-        await axios.post(`http://localhost:3000/api/tournaments/${id}/addPlayer`, {
+        await api.post(`/tournaments/${id}/addPlayer`, {
           playerId: selectedExistingPlayer
         });
       }

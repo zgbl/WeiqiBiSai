@@ -14,6 +14,7 @@ import {
   Divider,
 } from '@mui/material';
 import axios from 'axios';
+import { api } from '../services/api';
 
 const NewTournament = () => {
   const navigate = useNavigate();
@@ -67,7 +68,7 @@ const NewTournament = () => {
       };
 
       console.log('Submitting data:', dataToSubmit); // 添加日志
-      const response = await axios.post('http://localhost:3000/api/tournaments', dataToSubmit);
+      const response = await api.post('/tournaments', dataToSubmit);
       console.log('Tournament created:', response.data);
       navigate('/');
     } catch (error: any) {

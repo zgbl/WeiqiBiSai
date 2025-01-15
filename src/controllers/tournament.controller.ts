@@ -671,6 +671,7 @@ export class TournamentController {
   async deleteRound(req: Request, res: Response) {
     try {
       const { id, roundNumber } = req.params;
+      console.log('Deleting round:', { id, roundNumber });
       
       const tournament = await Tournament.findById(id);
       if (!tournament) {
@@ -682,13 +683,89 @@ export class TournamentController {
         return res.status(400).json({ message: 'Invalid round number' });
       }
 
-      tournament.rounds = tournament.rounds.filter(r => r.roundNumber < roundNum);
+      console.log('Current tournament rounds:', tournament.rounds.map(r => ({ 
+        roundNumber: r.roundNumber,
+        matchCount: r.matches.length,
+        completedMatches: r.matches.filter(m => m.winner).length
+      })));
+
+      // 获取要删除的轮次中的所有比赛
+      const roundToDelete = tournament.rounds[roundNum - 1];  // 轮次号从1开始，数组索引从0开始
+      if (!roundToDelete) {
+        return res.status(404).json({ message: 'Round not found' });
+      }
+
+      console.log('Found round to delete:', {
+        roundNumber: roundToDelete.roundNumber,
+        matchCount: roundToDelete.matches.length,
+        matches: roundToDelete.matches.map(m => ({
+          player1: m.player1,
+          player2: m.player2,
+          winner: m.winner
+        }))
+      });
+
+      // 更新选手得分
+      const playerScores = new Map(tournament.playerScores?.map(score => [score.player.toString(), score]) || []);
+      
+      roundToDelete.matches.forEach(match => {
+        if (match.winner) {
+          const winner = playerScores.get(match.winner.toString());
+          if (winner) {
+            console.log('Updating winner score:', {
+              playerId: match.winner.toString(),
+              oldScore: winner.currentScore,
+              newScore: winner.currentScore - 2
+            });
+            winner.currentScore -= 2; // 减去胜利得分
+            winner.opponents = winner.opponents?.filter(opp => 
+              opp.toString() !== match.player1.toString() && 
+              opp.toString() !== match.player2.toString()
+            );
+          }
+
+          const loser = playerScores.get(
+            match.player1.toString() === match.winner.toString() 
+              ? match.player2.toString() 
+              : match.player1.toString()
+          );
+          if (loser) {
+            console.log('Updating loser opponents:', {
+              playerId: loser.player.toString(),
+              oldOpponents: loser.opponents?.map(o => o.toString()),
+              newOpponents: loser.opponents?.filter(opp => 
+                opp.toString() !== match.player1.toString() && 
+                opp.toString() !== match.player2.toString()
+              ).map(o => o.toString())
+            });
+            loser.opponents = loser.opponents?.filter(opp => 
+              opp.toString() !== match.player1.toString() && 
+              opp.toString() !== match.player2.toString()
+            );
+          }
+        }
+      });
+
+      tournament.playerScores = Array.from(playerScores.values());
+
+      // 删除该轮次及之后的所有轮次
+      tournament.rounds = tournament.rounds.filter((_, index) => index < roundNum - 1);
 
       if (tournament.rounds.length === 0) {
         tournament.status = TournamentStatus.UPCOMING;
       } else if (tournament.status === TournamentStatus.COMPLETED) {
         tournament.status = TournamentStatus.ONGOING;
       }
+
+      console.log('Tournament after updates:', {
+        roundsCount: tournament.rounds.length,
+        status: tournament.status,
+        playerScores: Array.from(playerScores.entries()).map(([id, score]) => ({
+          playerId: id,
+          currentScore: score.currentScore,
+          opponentsCount: score.opponents?.length
+        }))
+      });
 
       await tournament.save();
 
@@ -823,6 +900,7 @@ export class TournamentController {
         score: item.score,
         opponentScore: item.opponentScore,
         totalScore: item.totalScore,
+        gamePoints: item.score,  // 对于 SWISS 赛制，gamePoints 就是胜场数 * 2
         wins: tournament.rounds.reduce((wins, round) => 
           wins + round.matches.filter(match => 
             match.winner && match.winner._id.toString() === item.player._id.toString()
@@ -840,7 +918,7 @@ export class TournamentController {
         _id: tournament._id,
         name: tournament.name,
         format: tournament.format,
-        results: results
+        results
       });
     } catch (error) {
       console.error('Error getting tournament results:', error);
@@ -866,6 +944,56 @@ export class TournamentController {
       res.json({ message: '比赛格式已统一更新' });
     } catch (error) {
       console.error('Error normalizing tournament formats:', error);
+      res.status(500).json({ 
+        message: error instanceof Error ? error.message : 'An unknown error occurred'
+      });
+    }
+  }
+
+  // End tournament
+  async endTournament(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+      
+      const tournament = await Tournament.findById(id);
+      if (!tournament) {
+        return res.status(404).json({ message: 'Tournament not found' });
+      }
+
+      // 检查是否所有轮次都已完成
+      const allRoundsCompleted = tournament.rounds?.every(round => 
+        round.matches.every(match => match.winner != null)
+      ) || false;
+
+      if (!allRoundsCompleted) {
+        return res.status(400).json({ 
+          message: 'Cannot end tournament until all matches have results' 
+        });
+      }
+
+      tournament.status = TournamentStatus.COMPLETED;
+      await tournament.save();
+
+      // 返回更新后的比赛信息
+      const updatedTournament = await Tournament.findById(id)
+        .populate('players')
+        .populate({
+          path: 'rounds.matches.player1',
+          select: 'name rank _id'
+        })
+        .populate({
+          path: 'rounds.matches.player2',
+          select: 'name rank _id'
+        })
+        .populate({
+          path: 'rounds.matches.winner',
+          select: 'name rank _id'
+        })
+        .exec();
+
+      res.json(updatedTournament);
+    } catch (error) {
+      console.error('Error ending tournament:', error);
       res.status(500).json({ 
         message: error instanceof Error ? error.message : 'An unknown error occurred'
       });

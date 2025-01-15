@@ -31,7 +31,7 @@ import {
   Radio
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
-import axios from 'axios';
+import { api, TournamentAPI } from '../services/api';
 import { useSnackbar } from 'notistack';
 
 // Styled components
@@ -231,7 +231,8 @@ const ResultsTable = ({ results }: { results: any[] }) => (
           <TableCell>Rank</TableCell>
           <TableCell>Player</TableCell>
           <TableCell align="right">Score</TableCell>
-          <TableCell align="right">Game Points</TableCell>
+          <TableCell align="right">Opponent Score</TableCell>
+          <TableCell align="right">Total Score</TableCell>
           <TableCell align="right">Wins</TableCell>
           <TableCell align="right">Losses</TableCell>
         </TableRow>
@@ -242,7 +243,8 @@ const ResultsTable = ({ results }: { results: any[] }) => (
             <TableCell>{result.rank}</TableCell>
             <TableCell>{result.player.name}</TableCell>
             <TableCell align="right">{result.score}</TableCell>
-            <TableCell align="right">{result.gamePoints > 0 ? `+${result.gamePoints}` : result.gamePoints}</TableCell>
+            <TableCell align="right">{result.opponentScore}</TableCell>
+            <TableCell align="right">{result.totalScore}</TableCell>
             <TableCell align="right">{result.wins}</TableCell>
             <TableCell align="right">{result.losses}</TableCell>
           </TableRow>
@@ -260,11 +262,41 @@ const TournamentMatches = () => {
   const [selectedMatch, setSelectedMatch] = useState<Match | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [roundToDelete, setRoundToDelete] = useState<number | null>(null);
+  const [rankingDialogOpen, setRankingDialogOpen] = useState(false);
+  const [currentRankings, setCurrentRankings] = useState<any[]>([]);
   const { enqueueSnackbar } = useSnackbar();
+
+  // 添加计算选手积分的函数
+  const calculatePlayerScores = () => {
+    if (!tournament) return new Map<string, number>();
+    
+    const scores = new Map<string, number>();
+    
+    // 初始化所有选手的积分为0
+    tournament.players.forEach(player => {
+      scores.set(player._id, 0);
+    });
+    
+    // 计算每个选手的积分
+    tournament.rounds.forEach(round => {
+      round.matches.forEach(match => {
+        if (match.winner) {
+          // 胜者得2分
+          scores.set(match.winner._id, (scores.get(match.winner._id) || 0) + 2);
+        } else if (match.result === 'DRAW') {
+          // 平局各得1分
+          scores.set(match.player1._id, (scores.get(match.player1._id) || 0) + 1);
+          scores.set(match.player2._id, (scores.get(match.player2._id) || 0) + 1);
+        }
+      });
+    });
+    
+    return scores;
+  };
 
   const fetchTournament = async () => {
     try {
-      const response = await axios.get(`/api/tournaments/${id}`);
+      const response = await api.get(`/tournaments/${id}`);
       console.log('Tournament response:', response.data);
       setTournament(response.data);
     } catch (error) {
@@ -361,14 +393,27 @@ const TournamentMatches = () => {
     });
 
     if (canEndTournament) {
-      navigate(`/tournament/${id}/results`);
+      try {
+        // 发送结束比赛的请求
+        const response = await api.put(`/tournaments/${id}/end`);
+        console.log('Tournament ended successfully:', response.data);
+        
+        // 显示成功消息
+        enqueueSnackbar('比赛已成功结束', { variant: 'success' });
+        
+        // 跳转到结果页面
+        navigate(`/tournament/${id}/results`);
+      } catch (error) {
+        console.error('Error ending tournament:', error);
+        enqueueSnackbar('结束比赛失败，请重试', { variant: 'error' });
+      }
     }
   };
 
   const handleGenerateNextRound = async () => {
     try {
       console.log('Generating next round...');
-      const response = await axios.post(`/api/tournaments/${id}/rounds`);
+      const response = await api.post(`/tournaments/${id}/rounds`);
       console.log('Next round response:', response.data);
       await fetchTournament();
       enqueueSnackbar('下一轮比赛已生成', { variant: 'success' });
@@ -401,8 +446,8 @@ const TournamentMatches = () => {
         return;
       }
 
-      const response = await axios.put(
-        `/api/tournaments/${id}/matches/${selectedMatch._id}/result`,
+      const response = await api.put(
+        `/tournaments/${id}/matches/${selectedMatch._id}/result`,
         { winnerId }
       );
 
@@ -418,8 +463,9 @@ const TournamentMatches = () => {
 
   const handleDeleteRound = async (roundNumber: number) => {
     try {
-      const response = await axios.delete(`/api/tournaments/${id}/rounds/${roundNumber}`);
-      console.log('Delete round response:', response.data);
+      console.log('Deleting round:', roundNumber);
+      const response = await TournamentAPI.deleteRound(id!, roundNumber);
+      console.log('Delete round response:', response);
       await fetchTournament();  // 等待数据刷新完成
       enqueueSnackbar('Round deleted successfully', { variant: 'success' });
     } catch (error) {
@@ -428,102 +474,110 @@ const TournamentMatches = () => {
     }
   };
 
+  const handleViewCurrentRankings = async () => {
+    try {
+      console.log('Fetching current rankings...');
+      const response = await api.get(`/tournaments/${id}/results`);
+      console.log('Rankings response:', response.data);
+      setCurrentRankings(response.data.results || []);
+      setRankingDialogOpen(true);
+    } catch (error) {
+      console.error('Error fetching current rankings:', error);
+      enqueueSnackbar('获取即时排名失败', { variant: 'error' });
+    }
+  };
+
   return (
     <Box sx={{ p: 3 }}>
       <Typography variant="h4" gutterBottom>
         {tournament.name} - Matches
       </Typography>
+      <Typography variant="h6" gutterBottom>
+        Tournament Status: {tournament.status}
+      </Typography>
+      <Typography variant="subtitle1" gutterBottom>
+        Format: {tournament.format}
+      </Typography>
+      <Typography variant="subtitle1" gutterBottom>
+        Players: {tournament.players?.length || 0}
+      </Typography>
 
-      <Box sx={{ mb: 3 }}>
-        <Typography variant="h6" gutterBottom>
-          Tournament Status: {tournament.status}
-        </Typography>
-        <Typography variant="body1" gutterBottom>
-          Format: {tournament.format}
-        </Typography>
-        <Typography variant="body1" gutterBottom>
-          Players: {tournament.players?.length || 0}
-        </Typography>
-      </Box>
-
-      {tournament.rounds?.map((round, roundIndex) => (
-        <Box key={roundIndex} sx={{ mb: 4 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-            <Typography variant="h5">
-              Round {round.roundNumber}
-            </Typography>
-            {tournament.status === 'ONGOING' && roundIndex === tournament.rounds.length - 1 && (
-              <IconButton
-                onClick={() => handleDeleteRound(round.roundNumber)}
-                sx={{ ml: 2 }}
-                size="small"
-              >
-                <DeleteIcon />
-              </IconButton>
-            )}
-          </Box>
-
-          {round.matches?.map((match, matchIndex) => (
-            <Card key={matchIndex} sx={{ mb: 2 }}>
-              <CardContent>
-                <Grid container spacing={2} alignItems="center">
-                  <Grid item xs={5}>
-                    <Box>
+      {tournament.rounds?.map((round, roundIndex) => {
+        const playerScores = calculatePlayerScores();
+        
+        return (
+          <StyledPaper key={roundIndex}>
+            <Box display="flex" alignItems="center" mb={2}>
+              <Typography variant="h5" style={{ flexGrow: 1 }}>
+                Round {roundIndex + 1}
+              </Typography>
+              {roundIndex === tournament.rounds.length - 1 && (
+                <IconButton
+                  onClick={() => {
+                    setRoundToDelete(roundIndex + 1);
+                    setDeleteDialogOpen(true);
+                  }}
+                  size="small"
+                >
+                  <DeleteIcon />
+                </IconButton>
+              )}
+            </Box>
+            
+            {round.matches.map((match, matchIndex) => (
+              <Card key={matchIndex} style={{ marginBottom: '1rem' }}>
+                <CardContent>
+                  <Grid container alignItems="center" spacing={2}>
+                    <Grid item xs={5} style={{ textAlign: 'right' }}>
                       <Typography>
-                        {match.player1?.name || 'TBD'} {match.player1?.rank}
-                        {tournament.format === 'MCMAHON' && (
-                          <Typography component="span" color="text.secondary" sx={{ ml: 1 }}>
-                            {match.player1Score}分
-                          </Typography>
-                        )}
-                      </Typography>
-                      {match.winner?._id === match.player1?._id && (
-                        <Typography color="primary" variant="caption">
-                          (Winner)
+                        {match.player1.name} {match.player1.rank}
+                        {/* 显示选手1的积分 */}
+                        <Typography component="span" color="textSecondary" style={{ marginLeft: 8 }}>
+                          ({playerScores.get(match.player1._id) || 0}分)
                         </Typography>
-                      )}
-                    </Box>
-                  </Grid>
-                  <Grid item xs={2}>
-                    <Typography align="center">vs</Typography>
-                  </Grid>
-                  <Grid item xs={5}>
-                    <Box>
+                      </Typography>
+                    </Grid>
+                    <Grid item xs={2} style={{ textAlign: 'center' }}>
+                      <Typography>vs</Typography>
+                    </Grid>
+                    <Grid item xs={5} style={{ textAlign: 'left' }}>
                       <Typography>
-                        {match.player2?.name || 'TBD'} {match.player2?.rank}
-                        {tournament.format === 'MCMAHON' && (
-                          <Typography component="span" color="text.secondary" sx={{ ml: 1 }}>
-                            {match.player2Score}分
-                          </Typography>
-                        )}
-                      </Typography>
-                      {match.winner?._id === match.player2?._id && (
-                        <Typography color="primary" variant="caption">
-                          (Winner)
+                        {match.player2.name} {match.player2.rank}
+                        {/* 显示选手2的积分 */}
+                        <Typography component="span" color="textSecondary" style={{ marginLeft: 8 }}>
+                          ({playerScores.get(match.player2._id) || 0}分)
                         </Typography>
-                      )}
-                    </Box>
+                      </Typography>
+                    </Grid>
                   </Grid>
-                </Grid>
-
-                {tournament.status === 'ONGOING' && roundIndex === tournament.rounds.length - 1 && (
-                  <Button
-                    variant="outlined"
-                    onClick={() => {
-                      setSelectedMatch(match);
-                      setOpenDialog(true);
-                    }}
-                    sx={{ mt: 1 }}
-                    fullWidth
-                  >
-                    {match.winner ? 'Update Result' : 'Record Result'}
-                  </Button>
-                )}
-              </CardContent>
-            </Card>
-          ))}
-        </Box>
-      ))}
+                  
+                  {match.winner ? (
+                    <Typography
+                      color="primary"
+                      style={{ textAlign: 'center', marginTop: '8px' }}
+                    >
+                      Winner: {match.winner.name}
+                    </Typography>
+                  ) : (
+                    <Box textAlign="center" mt={1}>
+                      <Button
+                        variant="outlined"
+                        color="primary"
+                        onClick={() => {
+                          setSelectedMatch(match);
+                          setOpenDialog(true);
+                        }}
+                      >
+                        RECORD RESULT
+                      </Button>
+                    </Box>
+                  )}
+                </CardContent>
+              </Card>
+            ))}
+          </StyledPaper>
+        );
+      })}
 
       <Box sx={{ mt: 3, display: 'flex', gap: 2 }}>
         <Box sx={{ display: 'flex', justifyContent: 'center', my: 2 }}>
@@ -542,6 +596,14 @@ const TournamentMatches = () => {
         >
           End Tournament
         </Button>
+
+        <Button
+          variant="contained"
+          color="info"
+          onClick={handleViewCurrentRankings}
+        >
+          即时排名
+        </Button>
       </Box>
 
       <RecordResultDialog
@@ -550,6 +612,48 @@ const TournamentMatches = () => {
         match={selectedMatch}
         onSave={handleRecordResult}
       />
+
+      <Dialog
+        open={deleteDialogOpen}
+        onClose={() => setDeleteDialogOpen(false)}
+      >
+        <DialogTitle>Delete Round</DialogTitle>
+        <DialogContent>
+          <Typography>
+            Are you sure you want to delete round {roundToDelete}? This action cannot be undone.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
+          <Button 
+            onClick={() => {
+              if (roundToDelete) {
+                handleDeleteRound(roundToDelete);
+                setDeleteDialogOpen(false);
+              }
+            }}
+            color="error"
+            variant="contained"
+          >
+            Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={rankingDialogOpen}
+        onClose={() => setRankingDialogOpen(false)}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle>当前比赛排名</DialogTitle>
+        <DialogContent>
+          <ResultsTable results={currentRankings} />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRankingDialogOpen(false)}>关闭</Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

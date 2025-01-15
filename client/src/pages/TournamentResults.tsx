@@ -12,7 +12,7 @@ import {
   Button,
 } from '@mui/material';
 import { useParams, useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import { api } from '../services/api';
 
 interface Player {
   _id: string;
@@ -48,7 +48,7 @@ const TournamentResults = () => {
   useEffect(() => {
     const fetchResults = async () => {
       try {
-        const response = await axios.get(`http://localhost:3000/api/tournaments/${id}/results`);
+        const response = await api.get(`/tournaments/${id}/results`);
         setResults(response.data.results || []);
         setTournamentName(response.data.name || '');
       } catch (error: any) {

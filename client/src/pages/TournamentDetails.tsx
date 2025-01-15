@@ -23,7 +23,7 @@ import {
   Stack,
   Checkbox
 } from '@mui/material';
-import axios from 'axios';
+import { api } from '../services/api';
 
 interface Tournament {
   _id: string;
@@ -79,7 +79,7 @@ const TournamentDetails = () => {
 
   const fetchTournament = async () => {
     try {
-      const response = await axios.get(`/api/tournaments/${id}`);
+      const response = await api.get(`/tournaments/${id}`);
       console.log('Tournament data:', response.data);
       if (response.data && response.data.players) {
         console.log('Players:', response.data.players);
@@ -94,7 +94,7 @@ const TournamentDetails = () => {
 
   const fetchExistingPlayers = async () => {
     try {
-      const response = await axios.get('/api/tournaments/players');
+      const response = await api.get(`/tournaments/players`);
       setExistingPlayers(response.data);
     } catch (error) {
       console.error('Error fetching players:', error);
@@ -120,9 +120,9 @@ const TournamentDetails = () => {
           setError('Name and rank are required');
           return;
         }
-        const response = await axios.post('/api/players', newPlayer);
+        const response = await api.post(`/players`, newPlayer);
         const newPlayerId = response.data._id;
-        await axios.post(`/api/tournaments/${id}/players`, {
+        await api.post(`/tournaments/${id}/players`, {
           playerId: newPlayerId
         });
       } else {
@@ -132,7 +132,7 @@ const TournamentDetails = () => {
         }
         // 批量添加选中的选手
         for (const playerId of selectedPlayers) {
-          await axios.post(`/api/tournaments/${id}/players`, {
+          await api.post(`/tournaments/${id}/players`, {
             playerId: playerId
           });
         }
@@ -185,6 +185,7 @@ const TournamentDetails = () => {
            currentPagePlayers.every(player => selectedPlayers.includes(player._id));
   };
 
+  /*
   const handleStartTournament = async () => {
     try {
       if (!tournament?.players || tournament.players.length < 2) {
@@ -192,11 +193,41 @@ const TournamentDetails = () => {
         return;
       }
 
-      await axios.post(`/api/tournaments/${id}/rounds`);
+      //await api.post(`/tournaments/${id}/rounds`);
+      //const response = await api.post(`/tournaments/${id}/rounds`);
+      http://localhost:5002/api/tournaments/678590059769ab454954d86a/rounds
+      await api.post(`/tournaments/${id}/rounds`);
       await fetchTournament();
       navigate(`/tournament/${id}/matches`);
     } catch (error: any) {
       console.error('Error starting tournament:', error);
+      setError(error.response?.data?.message || 'Failed to start tournament');
+      setSnackbarOpen(true);
+    }
+  };
+  */
+
+  const handleStartTournament = async () => {
+    try {
+      // 确保有至少两个玩家才能开始比赛
+      if (!tournament?.players || tournament.players.length < 2) {
+        setError('Need at least 2 players to start the tournament');
+        return;
+      }
+  
+      // 使用相对路径以触发 Vite 的代理
+      console.log('Requesting:', `/tournaments/${id}/rounds`);
+      await api.post(`/tournaments/${id}/rounds`);
+      
+      // 更新比赛数据
+      await fetchTournament();
+  
+      // 跳转到比赛页面
+      navigate(`/tournament/${id}/matches`);
+    } catch (error: any) {
+      console.error('Error starting tournament:', error);
+      
+      // 提示错误信息
       setError(error.response?.data?.message || 'Failed to start tournament');
       setSnackbarOpen(true);
     }
@@ -352,7 +383,7 @@ const TournamentDetails = () => {
                       onClick={async () => {
                         console.log('Starting tournament...');
                         try {
-                          await axios.post(`/api/tournaments/${tournament._id}/rounds`);
+                          await api.post(`/tournaments/${tournament._id}/rounds`);
                           console.log('Tournament ID is:', tournament._id);
                           await fetchTournament();
                         } catch (error: any) {
@@ -400,7 +431,7 @@ const TournamentDetails = () => {
                         onClick={async () => {
                           console.log('Generating next round...');
                           try {
-                            await axios.post(`/api/tournaments/${tournament._id}/rounds`);
+                            await api.post(`/tournaments/${tournament._id}/rounds`);
                             await fetchTournament();
                           } catch (error: any) {
                             console.error('Error generating next round:', error);
